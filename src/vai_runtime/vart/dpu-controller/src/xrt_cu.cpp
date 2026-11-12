@@ -15,86 +15,71 @@
  */
 #include "xrt_cu.hpp"
 
-#include <UniLog/UniLog.hpp>
 #include <ert.h>
 #include <glog/logging.h>
 
+#include <UniLog/UniLog.hpp>
 #include <vitis/ai/env_config.hpp>
 #include <vitis/ai/profiling.hpp>
 #include <vitis/ai/xxd.hpp>
 
-extern "C" XCL_DRIVER_DLLESPEC int xclRegRead(xclDeviceHandle handle,
-                                              uint32_t ipIndex, uint32_t offset,
-                                              uint32_t* datap);
-#include "../../xrt-device-handle/src/xrt_xcl_read.hpp"
 DEF_ENV_PARAM(DEBUG_XRT_CU, "0");
 DEF_ENV_PARAM(XLNX_DPU_TIMEOUT, "10000");
 DEF_ENV_PARAM(XLNX_XRT_CU_DRY_RUN, "0");
 
-#define DOMAIN xclBOKind(0)
 namespace xir {
+
 XrtCu::XrtCu(const std::string& cu_name)
     : cu_name_{cu_name}, handle_{xir::XrtDeviceHandle::get_instance()} {
   auto num_of_cus = handle_->get_num_of_cus(cu_name_);
   bo_handles_.reserve(num_of_cus);
-  for (auto idx = 0u; idx < num_of_cus; ++idx) {
-    auto xcl_handle =
-        xclOpen(handle_->get_device_id(cu_name_, idx), NULL, XCL_INFO);
-    auto bo_handle = xclAllocBO(xcl_handle, 4096, DOMAIN, XCL_BO_FLAGS_EXECBUF);
-    auto bo_addr = xclMapBO(xcl_handle, bo_handle, true);
-    auto cu_index = handle_->get_cu_index(cu_name_, idx);
-    auto ip_index = handle_->get_ip_index(cu_name_, idx);
-    auto cu_mask = handle_->get_cu_mask(cu_name_, idx);
-    auto cu_addr = handle_->get_cu_addr(cu_name_, idx);
-    auto cu_device_id = handle_->get_device_id(cu_name_, idx);
-    auto cu_core_id = handle_->get_core_id(cu_name_, idx);
-    auto cu_fingerprint = handle_->get_fingerprint(cu_name_, idx);
-    auto cu_name = handle_->get_instance_name(cu_name_, idx);
-    auto cu_kernel_name = handle_->get_cu_kernel_name(cu_name_, idx);
-    auto cu_full_name = handle_->get_cu_full_name(cu_name_, idx);
-    auto cu_uuid = handle_->get_uuid(cu_name_, idx);
-    UNI_LOG_CHECK(bo_addr != nullptr, VART_XRT_NULL_PTR);
-    auto r = xclOpenContext(xcl_handle, &cu_uuid[0], cu_index, true);
-    PCHECK(r == 0) << "cannot open context! "
-                   << "cu_index " << cu_index << " "      //
-                   << "cu_addr " << cu_addr << " "        //
-                   << "fingerprint " << std::hex << "0x"  //
-                   << cu_fingerprint << std::dec << " "   //
-        ;
-    // dpu read-only register range [0x10,0x200)
-#ifdef HAS_xclIPSetReadRange
-    r = xclIPSetReadRange(xcl_handle, cu_index, 0x10, 0x1F0);
-    PCHECK(r == 0) << "cannot set read range! "
-                   << "cu_index " << cu_index << " "      //
-                   << "cu_addr " << cu_addr << " "        //
-                   << "fingerprint " << std::hex << "0x"  //
-                   << cu_fingerprint << std::dec << " "   //
-        ;
-#endif
-    LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_CU))
-        << "idx " << idx << " "              //
-        << "handle " << xcl_handle << " "    //
-        << "bo_handle " << bo_handle << " "  //
-        << "bo_addr " << bo_addr << " "      //
-        << "cu_index " << cu_index << " "    //
-        << "ip_index " << ip_index << " "    //
-        << "cu_mask " << cu_mask << " "      //
-        << "cu_addr " << std::hex << "0x" << cu_addr << std::dec
-        << "cu_device "                     //
-        << cu_device_id << " "              //
-        << "cu_core " << cu_core_id << " "  //
-        << "cu_fingerprint 0x" << std::hex << cu_fingerprint << std::dec
-        << " "                                         //
-        << "cu_full_name " << cu_full_name << " "      //
-        << "cu_kernel_name " << cu_kernel_name << " "  //
-        << "cu_name " << cu_name << " "                //
-        ;
 
+  for (auto idx = 0u; idx < num_of_cus; ++idx) {
+    auto device_index = handle_->get_device_index(cu_name_, idx);
+    auto device_id = handle_->get_device_id(cu_name_, idx);
+    auto cu_full_name = handle_->get_cu_full_name(cu_name_, idx);
+    auto cu_kernel_name = handle_->get_cu_kernel_name(cu_name_, idx);
+    auto cu_instance_name = handle_->get_cu_instance_name(cu_name_, idx);
+    auto cu_fingerprint = handle_->get_cu_fingerprint(cu_name_, idx);
+    auto* kernel = reinterpret_cast<const xrt::kernel*>(
+        handle_->get_kernel_handle(cu_name_, idx));
+    auto run = std::make_unique<xrt::run>(*kernel);
+    auto ecmd = reinterpret_cast<ert_start_kernel_cmd*>(run->get_ert_packet());
+
+    LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_CU))
+        << "device_index/cu_index: " << device_index << "/" << idx << ", "  //
+        << "device_id " << device_id << ", "                                //
+        << "cu_full_name " << cu_full_name << ", "                          //
+        << "cu_kernel_name " << cu_kernel_name << ", "                      //
+        << "cu_instance_name " << cu_instance_name << ", "                  //
+        << std::hex                                                         //
+        << "fingerprint 0x" << cu_fingerprint << ", "                       //
+        << "kernel handle 0x" << kernel << ", "                             //
+        << "run handle 0x" << run.get() << " "                              //
+        << "ecmd 0x" << ecmd                                                //
+        << std::dec                                                         //
+        ;
     bo_handles_.emplace_back(
-        my_bo_handle{xcl_handle, bo_handle, bo_addr, cu_index, ip_index,
-                     cu_mask, cu_addr, cu_device_id, cu_core_id, cu_fingerprint,
-                     cu_name, cu_kernel_name, cu_full_name, cu_uuid});
-    init_cmd(idx);
+        my_bo_handle{kernel, std::move(run), ecmd, device_id, cu_fingerprint,
+                     cu_full_name, cu_kernel_name, cu_instance_name});
+    // init_cmd(idx);
+  }
+}
+
+XrtCu::~XrtCu() {
+  int idx = 0;
+  for (const auto& cu : bo_handles_) {
+    LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_CU))
+        << "idx " << idx << " "  //
+        << "cu_full_name " << cu.cu_full_name << " "
+        << "device_id " << cu.device_id << " "       //
+        << std::hex                                  //
+        << "kernel handle 0x" << cu.kernel << " "    //
+        << "run handle 0x" << cu.run.get() << " "    //
+        << "cu_fingerprint 0x" << cu.cu_fingerprint  //
+        << std::dec                                  //
+        ;
+    idx++;
   }
 }
 
@@ -128,10 +113,28 @@ static void print_timestamp(const uint64_t start, const uint64_t end,
   print_one_timestamp(ts);
 }
 
+static std::string ert_state_to_string(ert_cmd_state state) {
+  std::vector<std::string> state_str{
+      "ERT_CMD_STATE_NEW",         //
+      "ERT_CMD_STATE_QUEUED",      //
+      "ERT_CMD_STATE_RUNNING",     //
+      "ERT_CMD_STATE_COMPLETED",   //
+      "ERT_CMD_STATE_ERROR",       //
+      "ERT_CMD_STATE_ABORT",       //
+      "ERT_CMD_STATE_SUBMITTED",   //
+      "ERT_CMD_STATE_TIMEOUT",     //
+      "ERT_CMD_STATE_NORESPONSE",  //
+      "ERT_CMD_STATE_SKERROR",     //
+      "ERT_CMD_STATE_SKCRASHED",   //
+      "ERT_CMD_STATE_MAX"          //
+  };
+  return state_str.at(state - 1);
+}
+
 void XrtCu::run(size_t device_core_idx, XrtCu::prepare_ecmd_t prepare,
                 callback_t on_success, callback_t on_failure) {
   UNI_LOG_CHECK(bo_handles_.size() > 0u, VART_XRT_DEVICE_BUSY)
-    << "no cu availabe. cu_name=" << cu_name_;
+      << "no cu availabe. cu_name=" << cu_name_;
   struct timespec tp;
 #ifdef _WIN32
   uint64_t start = 0;  // TODO; implemented it on windows.
@@ -141,12 +144,8 @@ void XrtCu::run(size_t device_core_idx, XrtCu::prepare_ecmd_t prepare,
 #endif
 
   device_core_idx = device_core_idx % bo_handles_.size();
-  auto ecmd = bo_handles_[device_core_idx].get();
-  auto cu_mask = bo_handles_[device_core_idx].cu_mask;
-  auto cu_addr = bo_handles_[device_core_idx].cu_addr;
-  auto handle = bo_handles_[device_core_idx].handle;
-  auto bo_handle = bo_handles_[device_core_idx].bo_handle;
-  ecmd->cu_mask = cu_mask;
+  auto ecmd = bo_handles_[device_core_idx].ecmd;
+  ecmd->type = ERT_CTRL;
   ecmd->stat_enabled = 1;
   prepare(ecmd);
   LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_CU))
@@ -166,25 +165,22 @@ void XrtCu::run(size_t device_core_idx, XrtCu::prepare_ecmd_t prepare,
   bool is_done = false;
   auto start_from_0 = std::chrono::steady_clock::now();
   auto start_from = start_from_0;
-  auto state = 0;
+  auto state = ERT_CMD_STATE_NEW;
+  auto& r = *bo_handles_[device_core_idx].run;
   if (ENV_PARAM(XLNX_XRT_CU_DRY_RUN)) {
     is_done = true;
-    state = 4;
+    state = ERT_CMD_STATE_COMPLETED;
   } else {
-    auto exec_buf_result = xclExecBuf(handle, bo_handle);
-    UNI_LOG_CHECK(exec_buf_result == 0, VART_XRT_FUNC_FAULT)
-      << " cannot execute buffer";
+    r.start();
+
     start_from = std::chrono::steady_clock::now();
+    auto count = 1u;
     while (!is_done) {
-      auto wait_value = xclExecWait(handle, 1000);
-      UNI_LOG_CHECK(wait_value >= 0, VART_XRT_FUNC_FAULT)
-      << " cannot xclExecWait";
-      state = ecmd->state;
+      state = r.wait(1000);
       LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_CU) >= 2)
-          << "wait_value " << wait_value << " "  //
-          << "state " << state << " "            //
-          ;
-      if (state >= ERT_CMD_STATE_COMPLETED) {
+          << "wait state is " << ert_state_to_string(state)  //
+          << " in " << count << "s";
+      if (state >= ERT_CMD_STATE_COMPLETED && state != ERT_CMD_STATE_TIMEOUT) {
         is_done = true;
       }
       if (!is_done) {
@@ -196,6 +192,7 @@ void XrtCu::run(size_t device_core_idx, XrtCu::prepare_ecmd_t prepare,
           break;
         }
       }
+      count++;
     }
   };
   if (!is_done) {
@@ -210,16 +207,12 @@ void XrtCu::run(size_t device_core_idx, XrtCu::prepare_ecmd_t prepare,
         std::chrono::duration_cast<std::chrono::milliseconds>(now - start_from)
             .count();
     LOG_IF(WARNING, !is_done)
-        << "cu timeout! "                                //
-        << "device_core_idx " << device_core_idx << " "  //
-        << " handle=" << handle                          //
-        << " ENV_PARAM(XLNX_DPU_TIMEOUT) " << ENV_PARAM(XLNX_DPU_TIMEOUT)
-        << " "                                                           //
-        << "state " << state << " "                                      //
-        << "ERT_CMD_STATE_COMPLETED " << ERT_CMD_STATE_COMPLETED << " "  //
-        << "ms " << ms << " "                                            //
-        << " bo=" << bo_handle                                           //
-        << " is_done " << is_done << " "                                 //
+        << " cu timeout!"                                                   //
+        << " device_core_idx=" << device_core_idx                           //
+        << ", cu_name=" << bo_handles_[device_core_idx].cu_full_name        //
+        << ", ENV_PARAM(XLNX_DPU_TIMEOUT)=" << ENV_PARAM(XLNX_DPU_TIMEOUT)  //
+        << ", state is " << ert_state_to_string(state)                      //
+        << ", wait_time=" << ms                                             //
         ;
 #ifndef _WIN32
     print_timestamp(start, end, ert_start_kernel_timestamps(ecmd));
@@ -241,103 +234,66 @@ void XrtCu::run(size_t device_core_idx, XrtCu::prepare_ecmd_t prepare,
                    .count();
 #ifndef _WIN32
     auto c = ert_start_kernel_timestamps(ecmd);
-    LOG(INFO) << "device_core_idx =" << device_core_idx << " "  //
-              << "handle =" << handle << " "                    //
-              << "time = " << ms << " "                         //
-              << "time0 = " << ms0 << " "                       //
-              << "ts0 = " << c->skc_timestamps[0] << " "        //
-              << "ts1 = " << c->skc_timestamps[1] << " "        //
+    LOG(INFO) << " device_core_idx=" << device_core_idx                     //
+              << ", cu_name=" << bo_handles_[device_core_idx].cu_full_name  //
+              << ", state is " << ert_state_to_string(state)                //
+              << ", wait_time = " << ms                                     //
+              << ", run_time = " << ms0                                     //
+              << ", ts0 = " << c->skc_timestamps[0]                         //
+              << ", ts1 = " << c->skc_timestamps[1]                         //
         ;
     print_timestamp(start, end, c);
 #endif
   }
   __TOC__(XRT_RUN)
   if (is_done) {
-    on_success(handle, cu_addr);
+    on_success();
   } else {
-    on_failure(handle, cu_addr);
+    on_failure();
   }
 }
 
-XrtCu::~XrtCu() {
-  int idx = 0;
-  for (const auto& x : bo_handles_) {
-    xclUnmapBO(x.handle, x.bo_handle, x.bo_addr);
-    xclFreeBO(x.handle, x.bo_handle);
-    LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_CU))
-        << "idx " << idx << " "  //
-        << "handle " << x.handle << " "
-        << "bo_handle " << x.bo_handle << " "  //
-        << "bo_addr " << x.bo_addr << " "      //
-        << "cu_mask " << x.cu_mask << " "      //
-        << "cu_addr " << std::hex << "0x" << x.cu_addr << std::dec
-        << "device_id " << x.device_id << " "                                //
-        << "core_id " << x.core_id << " "                                    //
-        << "fingerprint 0x" << std::hex << x.fingerprint << std::dec << " "  //
-        ;
-    auto uuid = x.uuid;
-    auto r = xclCloseContext(x.handle, &uuid[0], x.cu_index);
-    PCHECK(r == 0) << "cannot close context! "
-                   << " cu_mask " << x.cu_mask    //
-                   << " cu_index " << x.cu_index  //
-                   << " cu_addr " << std::hex << "0x" << x.cu_addr
-                   << std::dec  //
-        ;
-    xclClose(x.handle);
-    idx = idx + 1;
-  }
-}
 size_t XrtCu::get_num_of_cu() const { return bo_handles_.size(); }
-
-std::string XrtCu::get_full_name(size_t device_core_idx) const {
-  return bo_handles_[device_core_idx].full_name;
-}
-
-std::string XrtCu::get_kernel_name(size_t device_core_idx) const {
-  return bo_handles_[device_core_idx].kernel_name;
-}
-
-std::string XrtCu::get_instance_name(size_t device_core_idx) const {
-  return bo_handles_[device_core_idx].name;
-}
 
 size_t XrtCu::get_device_id(size_t device_core_idx) const {
   return bo_handles_[device_core_idx].device_id;
 }
 
-size_t XrtCu::get_core_id(size_t device_core_idx) const {
-  return bo_handles_[device_core_idx].core_id;
+std::string XrtCu::get_full_name(size_t device_core_idx) const {
+  return bo_handles_[device_core_idx].cu_full_name;
+}
+
+std::string XrtCu::get_kernel_name(size_t device_core_idx) const {
+  return bo_handles_[device_core_idx].cu_kernel_name;
+}
+
+std::string XrtCu::get_instance_name(size_t device_core_idx) const {
+  return bo_handles_[device_core_idx].cu_instance_name;
 }
 
 uint64_t XrtCu::get_fingerprint(size_t device_core_idx) const {
-  return bo_handles_[device_core_idx].fingerprint;
+  return bo_handles_[device_core_idx].cu_fingerprint;
 }
 
 uint32_t XrtCu::read_register(size_t device_core_idx, uint32_t offset) const {
-  auto xcl_handle = bo_handles_[device_core_idx].handle;
-  auto cu_index = bo_handles_[device_core_idx].cu_index;
-  auto cu_addr = bo_handles_[device_core_idx].cu_addr;
-  uint32_t value = 0;
-  auto read_result = xrtXclRead(xcl_handle, cu_index, offset, cu_addr, &value);
-  UNI_LOG_CHECK(read_result == 0, VART_XRT_READ_ERROR)
-                           << "xclRegRead has error!"                       //
-                           << "read_result " << read_result << " "          //
-                           << "device_core_idx " << device_core_idx << " "  //
-                           << "cu_addr " << std::hex << "0x" << cu_index
-                           << " "  //
-      ;
-  return value;
-}
-ert_start_kernel_cmd* XrtCu::get_cmd(size_t device_core_id) {
-  auto ecmd = bo_handles_[device_core_id].get();
-  return ecmd;
+  return handle_->read_register(cu_name_, device_core_idx, offset);
 }
 
+void XrtCu::write_register(size_t device_core_idx, uint32_t offset,
+                           uint32_t value) const {
+  return handle_->write_register(cu_name_, device_core_idx, offset, value);
+}
+
+ert_start_kernel_cmd* XrtCu::get_cmd(size_t device_core_id) {
+  return bo_handles_[device_core_id].ecmd;
+}
+
+/*
 void XrtCu::init_cmd(size_t device_core_id) {
   auto ecmd = get_cmd(device_core_id);
   for (size_t i = 4; i < 128; ++i) {
     ecmd->data[i] = read_register(device_core_id, i * sizeof(uint32_t));
   }
-}
+}*/
 
 }  // namespace xir

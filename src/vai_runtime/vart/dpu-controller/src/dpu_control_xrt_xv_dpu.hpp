@@ -34,17 +34,16 @@ class DpuControllerXrtXvDpu : public xir::DpuController {
 
   virtual size_t get_num_of_dpus() const override;
   virtual size_t get_device_id(size_t device_core_id) const override;
-  virtual size_t get_core_id(size_t device_core_id) const override;
   virtual uint64_t get_fingerprint(size_t device_core_id) const override;
   virtual size_t get_batch_size(size_t device_core_id) const override;
-  virtual size_t get_size_of_gen_regs(size_t device_core_id) const;
+  virtual size_t get_size_of_gen_regs(size_t device_core_id) const override;
   virtual std::string get_full_name(size_t device_core_id) const override;
   virtual std::string get_kernel_name(size_t device_core_id) const override;
   virtual std::string get_instance_name(size_t device_core_id) const override;
 
  private:
   std::string xdpu_get_counter(size_t device_core_id);
-  virtual uint64_t get_device_hwconuter(size_t device_core_id) const override; 
+  virtual uint64_t get_device_hwconuter(size_t device_core_id) const override;
 
  private:
   std::unique_ptr<xir::XrtCu> xrt_cu_;

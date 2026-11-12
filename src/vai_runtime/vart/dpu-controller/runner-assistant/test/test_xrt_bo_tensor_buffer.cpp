@@ -14,18 +14,16 @@
  * limitations under the License.
  */
 
-
-
 #include <iostream>
 
 #include "vart/assistant/xrt_bo_tensor_buffer.hpp"
 #include "vart/zero_copy_helper.hpp"
 #include "xir/graph/graph.hpp"
 // xrt.h must be included after. otherwise, name pollution.
-#include <xrt.h>
+#include <xrt/xrt_bo.h>
+#include <xrt/xrt_device.h>
 using namespace std;
 int main(int argc, char* argv[]) {
-  LOG(INFO) << "HELLO , testing is started";
   auto graph = xir::Graph::deserialize(argv[1]);
   auto root = graph->get_root_subgraph();
   xir::Subgraph* s = nullptr;
@@ -35,24 +33,24 @@ int main(int argc, char* argv[]) {
       break;
     }
   }
-  auto h = xclOpen(0, NULL, XCL_INFO);
+
+  auto dev = std::make_shared<xrt::device>(0);
   auto input_tensor_buffer_size = vart::get_input_buffer_size(s);
-  auto bo1 = xclAllocBO(h, input_tensor_buffer_size, 0, 0);
+  auto bo = std::make_unique<xrt::bo>(*dev, input_tensor_buffer_size, 1);
   auto tensors = s->get_sorted_output_tensors();
   CHECK(!tensors.empty());
   auto tensor = *tensors.begin();
   tensor = tensor->get_producer()->get_input_op("input")->get_output_tensor();
   LOG(INFO) << "tensor = " << tensor->to_string();
   auto tensor_buffer = vart::assistant::XrtBoTensorBuffer::create(
-      vart::xrt_bo_t{h, bo1}, tensor);
+      vart::xrt_bo_t{dev.get(), bo.get()}, tensor);
   LOG(INFO) << "tensor_buffer=" << tensor_buffer->to_string();
   auto data_phy = tensor_buffer->data_phy({0, 0, 0, 0});
   LOG(INFO) << "phy = " << std::hex << "0x" << data_phy.first << std::dec
-            << " size=" << data_phy.second
-            << " bo_size= " << input_tensor_buffer_size;
-  // clean up
-  xclFreeBO(h, bo1);
-  xclClose(h);
-  CHECK(s != nullptr);
+            << " data_size=" << data_phy.second
+            << " request bo_size=" << input_tensor_buffer_size
+            << " allocated bo_size= " << bo->size();
+  CHECK_LE(input_tensor_buffer_size, bo->size())
+      << "allcate and request size mismatch";
   return 0;
 }

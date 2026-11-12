@@ -20,12 +20,13 @@
 
 #include "./buffer_object_xrt_imp.hpp"
 
+#include <experimental/xrt_system.h>
 #include <glog/logging.h>
 
+#include <UniLog/UniLog.hpp>
 #include <cstring>
 #include <string>
 
-#include <UniLog/UniLog.hpp>
 #include "vitis/ai/env_config.hpp"
 #include "vitis/ai/weak.hpp"
 DEF_ENV_PARAM(DEBUG_BUFFER_OBJECT, "0")
@@ -34,39 +35,18 @@ DEF_ENV_PARAM(DRAM_NUM_OF_BANK, "8")
 DEF_ENV_PARAM(DRAM_BANK_RANGE, "16384")
 
 namespace {
-static uint64_t get_physical_address(const xclDeviceHandle& handle,
-                                     const xclBufferHandle bo,
-                                     const size_t bank_offset) {
-  xclBOProperties p;
-  auto error_code = xclGetBOProperties(handle, bo, &p);
-  UNI_LOG_CHECK(error_code == 0, VART_XCLGETBO_INFO_ERROR)
-    << "cannot xclGetBOProperties !";
-  auto phy = error_code == 0 ? p.paddr + bank_offset : -1;
-
-  LOG_IF(INFO, ENV_PARAM(DEBUG_BUFFER_OBJECT))
-      << "error_code " << error_code << " "        //
-      << "handle " << handle << " "                //
-      << "bo " << bo << " "                        //
-      << "bank_offset " << std::hex << "0x" << bank_offset << " "  //
-      << "phy " << std::hex << "0x" << phy << " "  //
-      << std::dec << std::endl;
-  UNI_LOG_CHECK(phy != (decltype(phy))(-1), VART_XCLGETBO_INFO_ERROR)  //
-                                     << " error_code=" << error_code    //
-                                     << " handle " << handle << " "
-                                     << " bo=" << bo;
-  return phy;
-}
-
-static device_info_t find_xrt_info(xir::XrtDeviceHandle* device_handle,
+static device_info_t find_xrt_info(xir::XrtDeviceHandle* handle,
                                    size_t device_id,
                                    const std::string& cu_name) {
-  auto num_of_device_cores = device_handle->get_num_of_cus(cu_name);
-  for (auto i = 0u; i < num_of_device_cores; ++i) {
-    if (device_id == device_handle->get_device_id(cu_name, i)) {
+  auto num_of_cus = handle->get_num_of_cus(cu_name);
+  for (auto i = 0u; i < num_of_cus; ++i) {
+    if (device_id == handle->get_device_id(cu_name, i)) {
       return device_info_t{
-          device_id,                                 //
-          device_handle->get_handle(cu_name, i),     // xrt handle
-          device_handle->get_bank_flags(cu_name, i)  // flags
+          device_id,                                   //
+          reinterpret_cast<const xrt::device*>(
+              handle->get_device_handle(cu_name, i)),  //
+          reinterpret_cast<const xrt::kernel*>(
+              handle->get_kernel_handle(cu_name, i))   //
       };
     }
   }
@@ -80,15 +60,13 @@ BufferObjectXrtEdgeImp::BufferObjectXrtEdgeImp(size_t size, size_t device_id,
       holder_{xir::XrtDeviceHandle::get_instance()},           //
       xrt_{find_xrt_info(holder_.get(), device_id, cu_name)},  //
       size_{size},                                             //
-      bank_offset_{0}
-{
+      bank_offset_{0} {
   bo_size_ = size;
   bank_offset_ = 0;
-
-  //This optimization utilizes the parallel access feature of DRAM banks to
-  //increase the memory access bandwidth for XVDPU multiple batches. This is
-  //achieved by assigning different bank ranges to the physical addresses of
-  //the input, output, and workspace.
+  // This optimization utilizes the parallel access feature of DRAM banks to
+  // increase the memory access bandwidth for XVDPU multiple batches. This is
+  // achieved by assigning different bank ranges to the physical addresses of
+  // the input, output, and workspace.
   if (ENV_PARAM(DRAM_ADDRESS_MAPPING)) {
     int num_of_bank = ENV_PARAM(DRAM_NUM_OF_BANK);
     size_t range_per_bank = ENV_PARAM(DRAM_BANK_RANGE);
@@ -98,59 +76,80 @@ BufferObjectXrtEdgeImp::BufferObjectXrtEdgeImp(size_t size, size_t device_id,
       bank_offset_ = ((bo_idx++) % num_of_bank) * range_per_bank;
     }
   }
-
-  bo_ = xclAllocBO(xrt_.handle, bo_size_, 0 /* not used according to xrt.h*/,
-                   xrt_.flags);
-
-  UNI_LOG_CHECK(bo_ != XRT_NULL_BO, VART_XCL_ALLOC_FAIL)
-      << " allocation failure: "
-      << " xrt_.handle " << xrt_.handle << " "
-      << "xrt_.device_id " << xrt_.device_id << " "                          //
-      << "size  " << size << " "                                             //
-      << "xrt_.flags " << std::hex << "0x" << xrt_.flags << std::dec << " "  //
+  // temp to hard code memory bank to 0
+  // need a rule for all cards, edge and cloud
+  auto mem_group = holder_->get_memory_bank_index();
+  bo_ = std::make_unique<xrt::bo>(*xrt_.device, bo_size_,
+                                  mem_group);                        //
+  CHECK(bo_ != nullptr) << "bo initialization failed with "          //
+                        << "device_id " << device_id << " "          //
+                        << "cu_name " << cu_name << " "              //
+                        << "in bank group " << mem_group << " "      //
+                        << std::hex                                  //
+                        << "device handle 0x" << xrt_.device << " "  //
+                        << "kernel handle 0x" << xrt_.kernel << " "  //
+                        << std::dec                                  //
       ;
-  LOG_IF(INFO, ENV_PARAM(DEBUG_BUFFER_OBJECT))
-      << " xrt_.handle " << xrt_.handle << " "
-      << "xrt_.device_id " << xrt_.device_id << " "                          //
-      << "xrt_.flags " << std::hex << "0x" << xrt_.flags << std::dec << " "  //
+  // default bo buffer type is normal
+  data_ = bo_->map<int*>();
+  // XRT memory allocation is dynamic. After map<int*>() , only the vritual
+  // address is returned, and the physical memory is not immediately applied.
+  // Only when a 'page falut' is generated when the memory is written for the
+  // first time, the physical memory is applied for and then the write
+  // operation is performed.
+  // It takes 26ms to apply for 106MB of physical memory.
+  // In order not to affect the performance measurement of the first write
+  // operation, mmset is executed after mmap to actively apply for physical
+  // memory.
+  CHECK(data_ != nullptr) << "bo map failed with "                     //
+                          << "device_id " << device_id << " "          //
+                          << "cu_name " << cu_name << " "              //
+                          << "in bank group " << mem_group << " "      //
+                          << std::hex                                  //
+                          << "device handle 0x" << xrt_.device << " "  //
+                          << "kernel handle 0x" << xrt_.kernel << " "  //
+                          << std::dec                                  //
       ;
-  if (xrt_.flags & XCL_BO_FLAGS_DEV_ONLY) {
-    data_ = nullptr;
-  } else {
-    data_ = (int*)xclMapBO(xrt_.handle, bo_, true);  //
-    // XRT memory allocation is dynamic. After xclMapBO() , only the vritual
-    // address is returned, and the physical memory is not immediately applied.
-    // Only when a 'page falut' is generated when the memory is written for the
-    // first time, the physical memory is applied for and then the write
-    // operation is performed.
-    // It takes 26ms to apply for 106MB of physical memory.
-    // In order not to affect the performance measurement of the first write
-    // operation, mmset is executed after mmap to actively apply for physical
-    // memory.
-    std::memset(data_, 0, bo_size_);  //
-    // cache flush.
-    // When the cache is enabled, after memset is executed, the time for cpu to
-    // write back to the cache is not fixed, If it alternats with DPU writing,
-    // dirty data will appear in the cache, causeing some very difficult to
-    // debug errors. eg. DPU outputs random 64 bits zero .
-    // Execute cache flush ， write data to cache immediately.
-    xclSyncBO(xrt_.handle, bo_, XCL_BO_SYNC_BO_TO_DEVICE, bo_size_, 0);
-    data_ = data_ + (bank_offset_ / 4);
-  }
-  phy_ = get_physical_address(xrt_.handle, bo_, bank_offset_);
-  LOG_IF(INFO, ENV_PARAM(DEBUG_BUFFER_OBJECT))
-      << "create bufferobject "                                  //
-      << "phy_ " << std::hex << "0x" << phy_ << std::dec << " "  //
-      << "size " << size << " "                                  //
-      << "bo_size " << bo_size_ << " "                           //
-      << " ptr " << (void*)data_ << " ";
+  std::memset(data_, 0, bo_size_);
+  // cache flush.
+  // When the cache is enabled, after memset is executed, the time for cpu to
+  // write back to the cache is not fixed, If it alternats with DPU writing,
+  // dirty data will appear in the cache, causeing some very difficult to
+  // debug errors. eg. DPU outputs random 64 bits zero .
+  // Execute cache flush ， write data to cache immediately.
+  bo_->sync(XCL_BO_SYNC_BO_TO_DEVICE, bo_size_, 0);                       //
+  data_ = data_ + (bank_offset_ / sizeof(int));
+  phy_ = bo_->address() + bank_offset_;                                   //
+  CHECK(phy_ != 0u) << "bo phy address failed with "                      //
+                    << "device_id " << device_id << " "                   //
+                    << "cu_name " << cu_name << " "                       //
+                    << "in bank group " << mem_group << " "               //
+                    << std::hex                                           //
+                    << "device handle 0x" << xrt_.device << " "           //
+                    << "kernel handle 0x" << xrt_.kernel << " "           //
+                    << std::dec                                           //
+      ;
+  LOG_IF(INFO, ENV_PARAM(DEBUG_BUFFER_OBJECT))                            //
+      << "create bufferobject 0x"                                         //
+      << std::hex                                                         //
+      << this << " "                                                      //
+      << "bo_ 0x" << bo_.get() << " "                                     //
+      << "phy_ 0x" << phy_ << " "                                         //
+      << "data_ 0x" << data_ << " "                                       //
+      << std::dec                                                         //
+      << "desiredsize/actualsize " << size_ << "/" << bo_->size() << " "  //
+      << "bo_size" << bo_size_ << " "
+      << "memory group " << bo_->get_memory_group() << " "                //
+      << "flags " << (uint32_t)bo_->get_flags() << " "                    //
+      ;
 }
 
 BufferObjectXrtEdgeImp::~BufferObjectXrtEdgeImp() {
-  if (data_ != nullptr) {
-    xclUnmapBO(xrt_.handle, bo_, data_ - (bank_offset_ / 4));
-  }
-  xclFreeBO(xrt_.handle, bo_);
+  LOG_IF(INFO, ENV_PARAM(DEBUG_BUFFER_OBJECT)) << "delete bufferobject 0x"    //
+                                               << std::hex                    //
+                                               << this << " "                 //
+                                               << "bo_ " << bo_.get() << " "  //
+      ;
 }
 
 const void* BufferObjectXrtEdgeImp::data_r() const {  //
@@ -171,17 +170,16 @@ void BufferObjectXrtEdgeImp::sync_for_read(uint64_t offset, size_t size) {
         << " meaningless for sync a device only memory";
     return;
   }
-  auto sync =
-      xclSyncBO(xrt_.handle, bo_, XCL_BO_SYNC_BO_FROM_DEVICE, size, offset + bank_offset_);
-
+  bo_->sync(XCL_BO_SYNC_BO_FROM_DEVICE, size,
+            offset + bank_offset_);    //
   LOG_IF(INFO, ENV_PARAM(DEBUG_BUFFER_OBJECT))
-      << "phy " << std::hex << "0x" << phy_ << std::dec << " "  //
-      << "offset " << std::hex << "0x" << offset << " "         //
-      << std::dec <<                                            //
-      "size " << size << " "                                    //
+      << "sync from device "           //
+      << std::hex                      //
+      << "phy_ 0x" << phy_ << " "      //
+      << "offset 0x" << offset << " "  //
+      << std::dec                      //
+      << "size " << size << " "        //
       ;
-  UNI_LOG_CHECK(sync == 0, VART_XCL_SYNC_FAIL)
-      << "Synchronize the buffer contents from device to host fail !";
 }
 
 void BufferObjectXrtEdgeImp::sync_for_write(uint64_t offset, size_t size) {
@@ -190,73 +188,63 @@ void BufferObjectXrtEdgeImp::sync_for_write(uint64_t offset, size_t size) {
         << " meaningless for sync a device only memory";
     return;
   }
-  auto sync =
-      xclSyncBO(xrt_.handle, bo_, XCL_BO_SYNC_BO_TO_DEVICE, size, offset + bank_offset_);
+  bo_->sync(XCL_BO_SYNC_BO_TO_DEVICE, size,
+            offset + bank_offset_);    //
   LOG_IF(INFO, ENV_PARAM(DEBUG_BUFFER_OBJECT))
-      << "phy " << std::hex << "0x" << phy_ << std::dec << " "  //
-      << "offset " << std::hex << "0x" << offset << " "         //
-      << std::dec <<                                            //
-      "size " << size << " "                                    //
+      << "sync to device "             //
+      << std::hex                      //
+      << "phy_ 0x" << phy_ << " "      //
+      << "offset 0x" << offset << " "  //
+      << std::dec                      //
+      << "size " << size << " "        //
       ;
-  UNI_LOG_CHECK(sync == 0, VART_XCL_SYNC_FAIL)
-      << "Synchronize the buffer contents from host to device fail !";
 }
 
 void BufferObjectXrtEdgeImp::copy_from_host(const void* buf, size_t size,
                                             size_t offset) {
   LOG_IF(INFO, ENV_PARAM(DEBUG_BUFFER_OBJECT))
-      << "copy from host to device "
-      << "phy " << std::hex << "0x" << phy_ << std::dec << " "  //
-      << "offset " << std::hex << "0x" << offset << " "         //
-      << std::dec <<                                            //
-      "size " << size << " "                                    //
+      << "copy from host to device "   //
+      << std::hex                      //
+      << "phy_ 0x" << phy_ << " "      //
+      << "offset 0x" << offset << " "  //
+      << std::dec                      //
+      << "size " << size << " "        //
       ;
   UNI_LOG_CHECK(offset + size <= size_, VART_OUT_OF_RANGE);
-  auto ok = 0;
 #if IS_EDGE
   memcpy(static_cast<char*>(data_w()) + offset, buf, size);
   sync_for_write(offset, size);
 #else
-  auto flags = 0;
-  ok = xclUnmgdPwrite(xrt_.handle, flags, buf, size, phy(offset));
+  bo_->write(buf, size, offset);
 #endif
-  UNI_LOG_CHECK(ok == 0, VART_XCL_WRITE_ERROR)
-                  << "size " << size << " "      //
-                  << "offset " << offset << " "  //
-                  << "phy " << std::hex << "0x" << phy_ << " ";
 }
 void BufferObjectXrtEdgeImp::copy_to_host(void* buf, size_t size,
                                           size_t offset) {
   LOG_IF(INFO, ENV_PARAM(DEBUG_BUFFER_OBJECT))
-      << "copy from host to device "
-      << "phy " << std::hex << "0x" << phy_ << std::dec << " "  //
-      << "offset " << std::hex << "0x" << offset << " "         //
-      << std::dec <<                                            //
-      "size " << size << " "                                    //
+      << "copy from device to host "   //
+      << std::hex                      //
+      << "phy_ 0x" << phy_ << " "      //
+      << "offset 0x" << offset << " "  //
+      << std::dec                      //
+      << "size " << size << " "        //
       ;
   UNI_LOG_CHECK(offset + size <= size_, VART_OUT_OF_RANGE);
-  auto ret = 0;
 #if IS_EDGE
   sync_for_read(offset, size);
   memcpy(buf, static_cast<const char*>(data_r()) + offset, size);
 #else
-  auto flags = 0;
-  ret = xclUnmgdPread(xrt_.handle, flags, buf, size, phy(offset));
+  bo_->read(buf, size, offset);
 #endif
-  UNI_LOG_CHECK(ret == 0, VART_XCL_READ_ERROR)
-                   << "size " << size << " "      //
-                   << "offset " << offset << " "  //
-                   << "phy " << std::hex << "0x" << phy_ << " ";
 }
 
 xir::XclBo BufferObjectXrtEdgeImp::get_xcl_bo() const {
-  return xir::XclBo{xrt_.handle, bo_};
+  return xir::XclBo{xrt_.device, bo_.get()};
 }
 }  // namespace
 
 REGISTER_INJECTION_BEGIN(xir::BufferObject, 1, BufferObjectXrtEdgeImp, size_t&,
                          size_t&, const std::string&) {
-  auto ret = xclProbe() > 0;
+  auto ret = xrt::system::enumerate_devices() > 0;
   LOG_IF(INFO, ENV_PARAM(DEBUG_BUFFER_OBJECT))
       << " ret=" << ret
       << " register factory methord of BufferObjectXrtEdgeImp for "

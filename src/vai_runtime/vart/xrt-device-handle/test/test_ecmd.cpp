@@ -18,11 +18,11 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/mman.h>
-#include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <xclbin.h>
-#include <xrt.h>
+#include <unistd.h>
+#include <xrt/xrt_device.h>
+#include <xrt/xrt_kernel.h>
 
 #include <chrono>
 #include <cstring>
@@ -32,11 +32,12 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+
+#include "xir/xrt_device_handle.hpp"
 using namespace std;
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #define BIT(nr) (1 << (nr))
 
-#define DOMAIN xclBOKind(0)
 int DEBUG_COUT = 0;
 #define ENABLE_LOCK 1
 
@@ -68,12 +69,6 @@ int DEBUG_COUT = 0;
 #define XDPU_CONTROL_ADDR_6_H 0x134
 #define XDPU_CONTROL_ADDR_7_L 0x138
 #define XDPU_CONTROL_ADDR_7_H 0x13C
-
-static size_t get_size(int fd) {
-  struct stat statbuf;
-  fstat(fd, &statbuf);
-  return statbuf.st_size;
-}
 
 struct timestamps {
   uint64_t total;
@@ -110,10 +105,8 @@ int g_idx = 1;
 std::mutex g_mtx;
 std::mutex g_mtx_ecmd;
 
-void run(xclDeviceHandle xcl_handle, unsigned int cu_mask) {
-  auto bo_handle = xclAllocBO(xcl_handle, 4096, DOMAIN, XCL_BO_FLAGS_EXECBUF);
-  auto bo_addr = xclMapBO(xcl_handle, bo_handle, true);
-  auto ecmd = reinterpret_cast<ert_start_kernel_cmd*>(bo_addr);
+void run(xrt::run* r) {
+  auto ecmd = reinterpret_cast<ert_start_kernel_cmd*>(r->get_ert_packet());
   while (1) {
     if (g_is_stop) return;
     if (g_idx > 20000) return;
@@ -122,7 +115,7 @@ void run(xclDeviceHandle xcl_handle, unsigned int cu_mask) {
     clock_gettime(CLOCK_MONOTONIC, &tp);
     uint64_t start = tp2ns(&tp);
 
-    ecmd->cu_mask = cu_mask;
+    // ecmd->cu_mask = cu_mask;
     ecmd->stat_enabled = 1;
 
     ecmd->state = ERT_CMD_STATE_NEW;
@@ -154,92 +147,79 @@ void run(xclDeviceHandle xcl_handle, unsigned int cu_mask) {
            << endl;
 
     if (ENABLE_LOCK) g_mtx_ecmd.lock();
-    xclExecBuf(xcl_handle, bo_handle);
-    auto wait_value = 0;
+    r->start();
     int wait_count = 0;
-    while (ecmd->state != 4 && wait_count < 5) {
+    while (state < 4 && wait_count < 5) {
       if (DEBUG_COUT) cout << "Waiting for DONE\n";
-      wait_value = xclExecWait(xcl_handle, 1000);
+      state = r->wait(1000);
       wait_count++;
     }
     if (ENABLE_LOCK) g_mtx_ecmd.unlock();
     clock_gettime(CLOCK_MONOTONIC, &tp);
     uint64_t end = tp2ns(&tp);
 
-    state = ecmd->state;
+    if (state > 4 || wait_count == 5) r->abort();
     print_timestamp(start, end, ert_start_kernel_timestamps(ecmd));
     g_mtx.lock();
     g_idx++;
     g_mtx.unlock();
-
     if (DEBUG_COUT)
-      cout << "wait_value " << wait_value << " "  //
+      cout << "wait_count " << wait_count << " "  //
            << "state " << state << " "            //
            << endl;
   }
 }
 
-void load_xclbin(const string& filename, xclDeviceHandle handle) {
-  auto fd = open(filename.c_str(), O_RDONLY | O_CLOEXEC);
-  auto data = mmap(NULL, get_size(fd), PROT_READ, MAP_PRIVATE, fd, 0);
-  const xclBin* blob = (const xclBin*)data;
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-  xclLockDevice(handle);
-  xclLoadXclBin(handle, blob);
-  auto top = (const axlf*)data;
-  string dsa = (const char*)top->m_header.m_platformVBNV;
-  xuid_t uuid;
-  memcpy(&uuid, top->m_header.uuid, sizeof(xuid_t));
-  auto r = xclOpenContext(handle, &uuid[0], 0, true);
-  if (DEBUG_COUT) cout << "dsa: " << dsa << " r: " << r << endl;
-  // dpu read-only register range [0x10,0x200)
-  r = xclIPSetReadRange(handle, 0, 0x10, 0x1F0);
-  if (DEBUG_COUT) cout << "xclIPSetReadRange return: " << r << endl;
-  close(fd);
-}
-
 string input_data = "./case_new_resnet50/input_aquant.bin";
 string code = "./case_new_resnet50/code.bin";
 string reg0 = "./case_new_resnet50/reg0.bin";
-void upload_data(xclDeviceHandle handle) {
-  unsigned long addr = 0xc000001000;
-  unsigned long size = 150528;
+void upload_data(const xrt::device* device) {
+  uint64_t addr = 0xc000001000;
+  size_t size = 150528;
   auto buf = std::vector<char>(size);
-  auto flags = 0;
+  auto flags = XRT_BO_FLAGS_DEV_ONLY;
   ifstream infile(input_data, ios::in | ios::binary);
   assert(infile);
-  int i = 0;
-  while (infile.read((char*)&buf[i], sizeof(char))) {
-    ++i;
-  }
-  auto ok = xclUnmgdPwrite(handle, flags, &buf[0], size, addr);
-  if (ok != 0) {
-    std::cout << "sync for write faild! addr=" << addr << ",size = " << size;
-  }
-  assert(ok == 0);
+  infile.read(buf.data(), size);
+  // not sure if it's correct to replace xclUnmgdPwrite() with xrt::bo()
+  // if true, replace the other invokes
+
+  // auto ok = xclUnmgdPwrite(handle, flags, &buf[0], size, addr);
+  auto bo_in = xrt::bo(*device, (void*)addr, size, flags, 0);
+  auto in_phy = bo_in.address();
+  std::cout << "in_phy=0x" << std::hex << in_phy
+            << ", addr=0x" << addr << std::dec << ", size = " << size;
+  assert(in_phy == 0);
+  bo_in.write(buf.data());
 
   addr = 0xc280000000;
   size = 38108;
   buf = std::vector<char>(size);
   infile = ifstream(code, ios::in | ios::binary);
   assert(infile);
-  i = 0;
+  infile.read(buf.data(), size);
+  /*i = 0;
   while (infile.read((char*)&buf[i], sizeof(char))) {
     ++i;
   }
   ok = xclUnmgdPwrite(handle, flags, &buf[0], size, addr);
   if (ok != 0) {
     std::cout << "sync for write faild! addr=" << addr << ",size = " << size;
-  }
-
-  assert(ok == 0);
+  }*/
+  auto bo_code = xrt::bo(*device, (void*)addr, size, flags, 0);
+  auto code_phy = bo_code.address();
+  std::cout << "code_phy=0x" << std::hex << code_phy
+            << ", addr=0x" << addr << std::dec << ", size = " << size;
+  assert(code_phy == 0);
+  bo_code.write(buf.data());
 
   addr = 0xc200000000;
   size = 25775488;
   buf = std::vector<char>(size);
   infile = ifstream(reg0, ios::in | ios::binary);
   assert(infile);
-  i = 0;
+  infile.read(buf.data(), size);
+  /*i = 0;
   while (infile.read((char*)&buf[i], sizeof(char))) {
     ++i;
   }
@@ -247,23 +227,33 @@ void upload_data(xclDeviceHandle handle) {
   if (ok != 0) {
     std::cout << "sync for write faild! addr=" << addr << ",size = " << size;
   }
-  assert(ok == 0);
+  assert(ok == 0);*/
+  auto bo_reg = xrt::bo(*device, (void*)addr, size, flags, 0);
+  auto reg_phy = bo_reg.address();
+  std::cout << "reg_phy=0x" << std::hex << reg_phy
+            << ", addr=0x" << addr << std::dec << ", size = " << size;
+  assert(reg_phy == 0);
+  bo_reg.write(buf.data());
 }
 
 int main(int argc, char* argv[]) {
   auto filename = std::string(argv[1]);
   int thread_nums = (argc < 3) ? 2 : stoi(argv[2]);
   DEBUG_COUT = (argc > 4) && (stoi(argv[3]) > 0) ? 0 : 1;
-  auto handle = xclOpen(0, NULL, XCL_INFO);
-  load_xclbin(filename, handle);
-  upload_data(handle);
-  if (DEBUG_COUT)
-    cout << "handle: " << handle << " thread nums:" << thread_nums << endl;
-  auto cu_mask = 1u;
+  auto h = xir::XrtDeviceHandle::get_instance();
+  std::string cu_name("DPU");
+  auto device =
+      reinterpret_cast<const xrt::device*>(h->get_device_handle(cu_name, 0));
+  auto kernel =
+      reinterpret_cast<const xrt::kernel*>(h->get_kernel_handle(cu_name, 0));
+  auto r = xrt::run(*kernel);
+
+  upload_data(device);
+  if (DEBUG_COUT) cout << "thread nums:" << thread_nums << endl;
   signal(SIGINT, signal_handler);
   vector<thread> threads;
   for (int i = 0; i < thread_nums; ++i) {
-    threads.emplace_back(thread(run, handle, cu_mask));
+    threads.emplace_back(thread(run, &r));
   }
   auto exe_start = std::chrono::system_clock::now();
   for (int i = 0; i < thread_nums; ++i) {

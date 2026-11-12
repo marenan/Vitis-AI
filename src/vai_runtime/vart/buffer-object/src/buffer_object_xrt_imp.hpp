@@ -14,12 +14,16 @@
  * limitations under the License.
  */
 #pragma once
-//#include <xrt/xclhal2.h>
 
 #ifdef ENABLE_CLOUD
-#include <xrt.h>
+#  include <xrt.h>
+#  include <xrt/xrt_bo.h>
+#  include <xrt/xrt_device.h>
+#  include <xrt/xrt_kernel.h>
 #else
-#include <xrt/xrt.h>
+#  include <xrt/xrt_bo.h>
+#  include <xrt/xrt_device.h>
+#  include <xrt/xrt_kernel.h>
 #endif
 
 #include <cstdint>
@@ -29,8 +33,8 @@
 namespace {
 struct device_info_t {
   const size_t device_id;
-  const xclDeviceHandle handle;
-  const unsigned int flags;
+  const xrt::device* device;
+  const xrt::kernel* kernel;
 };
 
 class BufferObjectXrtEdgeImp : public xir::BufferObject {
@@ -62,11 +66,7 @@ class BufferObjectXrtEdgeImp : public xir::BufferObject {
   const size_t size_;
   size_t bo_size_;
   size_t bank_offset_;
-#ifdef _WIN32
-  void* bo_;
-#else
-  unsigned int bo_;
-#endif
+  std::unique_ptr<xrt::bo> bo_;
   int* data_;
   uint64_t phy_;
 };

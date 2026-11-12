@@ -16,38 +16,26 @@
 
 #include "vart/assistant/xrt_bo_tensor_buffer.hpp"
 #ifdef XRT_FOUND
-#include <xrt.h>
+#  include <xrt/xrt_bo.h>
 #endif
 
 #include <UniLog/UniLog.hpp>
+
 #include "vart/runner.hpp"
 
 namespace vart {
 namespace assistant {
 
 #ifdef XRT_FOUND
-static uint64_t get_physical_address(const xclDeviceHandle& handle,
-                                     const xclBufferHandle bo) {
-  xclBOProperties p;
-  auto error_code = xclGetBOProperties(handle, bo, &p);
-  uint64_t phy = 0u;
-  if (error_code != 0) {
-    LOG(INFO) << "cannot xclGetBOProperties !";
-  }
-  phy = error_code == 0 ? p.paddr : -1;
+static uint64_t get_physical_address(const void* bo) {
+  CHECK(nullptr != bo) << "bo ptr null";
+  auto xrt_bo = reinterpret_cast<const xrt::bo*>(bo);
+  uint64_t phy = xrt_bo->address();
+  CHECK(phy != 0u) << "get nullptr phy address";
   return phy;
 }
 #else
-typedef void* xclDeviceHandle;
-
-#ifdef _WIN32
-typedef void* xclBufferHandle;
-#else
-typedef unsigned int xclBufferHandle;
-#endif
-
-static uint64_t get_physical_address(const xclDeviceHandle& handle,
-                                     const xclBufferHandle bo) {
+static uint64_t get_physical_address(const void* bo) {
   LOG(FATAL) << "not implemented, no XRT found";
   return 0ull;
 }
@@ -62,16 +50,16 @@ XrtBoTensorBuffer::XrtBoTensorBuffer(vart::xrt_bo_t bo,
                                      const xir::Tensor* tensor)
     : TensorBuffer(tensor), bo_{bo} {
   UNI_LOG_CHECK(tensor->has_attr("reg_id"), VART_TENSOR_INFO_ERROR)
-    << "tensor: " << tensor->to_string();
+      << "tensor: " << tensor->to_string();
   UNI_LOG_CHECK(tensor->has_attr("ddr_addr"), VART_TENSOR_INFO_ERROR)
-    << "tensor: " << tensor->to_string();
+      << "tensor: " << tensor->to_string();
   UNI_LOG_CHECK(tensor->has_attr("location"), VART_TENSOR_INFO_ERROR)
-    << "tensor: " << tensor->to_string();
+      << "tensor: " << tensor->to_string();
   // auto reg_id = (size_t)tensor->template get_attr<int>("reg_id");
   ddr_addr_ = (size_t)tensor->template get_attr<int>("ddr_addr");
   auto location = (size_t)tensor->template get_attr<int>("location");
   UNI_LOG_CHECK(location == 1, VART_TENSOR_INFO_ERROR);
-  phy_addr_ = get_physical_address(bo.xrt_handle, bo.xrt_bo_handle);
+  phy_addr_ = get_physical_address(bo.xrt_bo_handle);
   // TODO: assumue one bo one tensor, and the tensor should be on the
   // TODO: this is the bug for image bundling.
   size_ = tensor->get_data_size() / tensor->get_shape()[0];

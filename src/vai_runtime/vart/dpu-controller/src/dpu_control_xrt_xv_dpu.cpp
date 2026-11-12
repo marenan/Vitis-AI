@@ -33,7 +33,6 @@ DEF_ENV_PARAM(XLNX_SHOW_DPU_COUNTER, "0");
 
 DEF_ENV_PARAM(DEBUG_AP_START_CU_XVDPU, "0");
 DEF_ENV_PARAM_2(XLNX_DIRTY_HACK_XVDPU_GEN_BASE, "0x200", uint32_t);
-#define DOMAIN xclBOKind(1)
 
 DpuControllerXrtXvDpu::DpuControllerXrtXvDpu(
     std::unique_ptr<xir::XrtCu>&& xrt_cu)
@@ -41,16 +40,14 @@ DpuControllerXrtXvDpu::DpuControllerXrtXvDpu(
       xrt_cu_{std::move(xrt_cu)} {
   for (size_t i = 0; i < get_num_of_dpus(); i++) {
     auto cu_device_id = xrt_cu_->get_device_id(i);
-    auto cu_core_id = xrt_cu_->get_core_id(i);
     auto cu_name = xrt_cu_->get_instance_name(i);
     auto cu_full_name = xrt_cu_->get_full_name(i);
     auto cu_fingerprint = xrt_cu_->get_fingerprint(i);
     auto cu_batch = get_batch_size(i);
 #ifndef _WIN32
-    vitis::ai::trace::add_info("dpu-controller", TRACE_VAR(cu_device_id),
-                               TRACE_VAR(cu_core_id), TRACE_VAR(cu_batch),
-                               TRACE_VAR(cu_name), TRACE_VAR(cu_full_name),
-                               TRACE_VAR(cu_fingerprint));
+    vitis::ai::trace::add_info(
+        "dpu-controller", TRACE_VAR(cu_device_id), TRACE_VAR(cu_batch),
+        TRACE_VAR(cu_name), TRACE_VAR(cu_full_name), TRACE_VAR(cu_fingerprint));
 #endif
   }
 }
@@ -204,14 +201,14 @@ void DpuControllerXrtXvDpu::run(size_t core_idx, const uint64_t code,
   xrt_cu_->run(
       core_idx, func,
       // on_success
-      [core_idx, this](xclDeviceHandle handle, uint64_t cu_addr) -> void {
+      [core_idx, this]() -> void {
         if (ENV_PARAM(XLNX_SHOW_DPU_COUNTER)) {
           std::cout << "core_idx = " << core_idx << " "
                     << xdpu_get_counter(core_idx) << std::endl;
         }
       },
       // on failure
-      [core_idx, this](xclDeviceHandle handle, uint64_t cu_addr) -> void {
+      [core_idx, this]() -> void {
         LOG(FATAL) << "dpu timeout! "
                    << "core_idx = " << core_idx << "\n"
                    << xdpu_get_counter(core_idx);
@@ -228,9 +225,6 @@ size_t DpuControllerXrtXvDpu::get_num_of_dpus() const {
 }
 size_t DpuControllerXrtXvDpu::get_device_id(size_t device_core_id) const {
   return xrt_cu_->get_device_id(device_core_id);
-}
-size_t DpuControllerXrtXvDpu::get_core_id(size_t device_core_id) const {
-  return xrt_cu_->get_core_id(device_core_id);
 }
 uint64_t DpuControllerXrtXvDpu::get_fingerprint(size_t device_core_id) const {
   return xrt_cu_->get_fingerprint(device_core_id);

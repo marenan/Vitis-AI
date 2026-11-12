@@ -38,13 +38,6 @@ option(HAVE_SOFTMAX "enable softmax or not" on)
 if(XRT_FOUND)
   set(CMAKE_REQUIRED_INCLUDES "${XRT_INCLUDE_DIRS}")
   set(CMAKE_REQUIRED_LIBRARIES "${XRT_CORE_LIBRARIES}")
-  include(CheckCXXSourceCompiles)
-  check_cxx_source_compiles(
-    "#include <xrt.h>
- #include <experimental/xrt-next.h>
- int main(int argc, char * argv[]) {std::ignore = xclIPSetReadRange(0u,0u,0u); return 0;}
-"
-    HAS_xclIPSetReadRange)
   list(APPEND MY_PROJECT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/xrt_cu.hpp
        ${CMAKE_CURRENT_SOURCE_DIR}/src/xrt_cu.cpp)
 endif(XRT_FOUND)
@@ -65,7 +58,7 @@ if(XRT_FOUND)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/sfm_control_xrt_edge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/sfm_control_xrt_edge.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/sfm_controller.cpp)
-  list(APPEND MY_PROJECT_DEPS xrt-device-handle XRT::xrt_core XRT::xrt_coreutil)
+  list(APPEND MY_PROJECT_DEPS xrt-device-handle XRT::xrt_coreutil uuid)
 else(XRT_FOUND)
   if(MSVC)
     message(WARNING "SFMC controller is not implemented on MSVC platform")
@@ -88,9 +81,6 @@ add_library(${COMPONENT_NAME} ${MY_PROJECT_SOURCES} ${SFMX_SOURCES}
                               ${CMAKE_CURRENT_BINARY_DIR}/version.c)
 if(XRT_FOUND)
   target_compile_definitions(${COMPONENT_NAME} PRIVATE XRT_FOUND)
-  if(HAS_xclIPSetReadRange)
-    target_compile_definitions(${COMPONENT_NAME} PRIVATE HAS_xclIPSetReadRange)
-  endif(HAS_xclIPSetReadRange)
 endif(XRT_FOUND)
 
 set_target_properties(

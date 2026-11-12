@@ -15,6 +15,7 @@
  */
 #include "./sfm_control_xrt_edge.hpp"
 
+#include <experimental/xrt_system.h>
 #include <glog/logging.h>
 
 #include <cmath>
@@ -27,7 +28,7 @@ DEF_ENV_PARAM_2(XLNX_SMFC_BUFFER_SIZE, "5242880", size_t);
 namespace {
 
 std::unique_ptr<xir::XrtCu> make_xrt_cu() {
-  if (xclProbe() > 0) {
+  if (xrt::system::enumerate_devices() > 0) {
     auto ret = std::make_unique<xir::XrtCu>(std::string{"sfm_xrt_top"});
     if (ret->get_num_of_cu() > 0u) {
       return ret;
@@ -220,12 +221,12 @@ void SfmControllerXrtEdge::run_xrt_cu(size_t core_idx, const uint64_t input,
   xrt_cu_->run(
       core_idx, func,
       // on_success
-      [core_idx](xclDeviceHandle handle, uint64_t cu_addr) -> void {
+      [core_idx]() -> void {
         LOG_IF(INFO, ENV_PARAM(DEBUG_SFM_RUNNER))
             << "core_idx = " << core_idx << "\n";
       },
       // on failure
-      [core_idx](xclDeviceHandle handle, uint64_t cu_addr) -> void {
+      [core_idx]() -> void {
         LOG(FATAL) << "sfm timeout! "
                    << "core_idx = " << core_idx << "\n";
       });

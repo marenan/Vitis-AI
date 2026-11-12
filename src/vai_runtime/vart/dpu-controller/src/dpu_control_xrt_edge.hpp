@@ -34,7 +34,6 @@ class DpuControllerXrtEdge : public xir::DpuController {
 
   virtual size_t get_num_of_dpus() const override;
   virtual size_t get_device_id(size_t device_core_id) const override;
-  virtual size_t get_core_id(size_t device_core_id) const override;
   virtual uint64_t get_fingerprint(size_t device_core_id) const override;
   virtual std::string get_full_name(size_t device_core_id) const override;
   virtual std::string get_kernel_name(size_t device_core_id) const override;

@@ -37,8 +37,7 @@ target_sources(
   ${COMPONENT_NAME} PRIVATE include/vart/assistant/xrt_bo_tensor_buffer.hpp
                             src/xrt_bo_tensor_buffer.cpp)
 if(XRT_FOUND)
-  target_link_libraries(${COMPONENT_NAME} PRIVATE XRT::xrt_core
-                                                  XRT::xrt_coreutil)
+  target_link_libraries(${COMPONENT_NAME} PRIVATE XRT::xrt_coreutil)
 endif(XRT_FOUND)
 
 add_library(${PROJECT_NAME}::${COMPONENT_NAME} ALIAS ${COMPONENT_NAME})
@@ -51,6 +50,7 @@ target_include_directories(
   ${COMPONENT_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
+
 set_target_properties(
   ${COMPONENT_NAME}
   PROPERTIES VERSION "${PROJECT_VERSION}"
@@ -80,10 +80,12 @@ target_link_libraries(test_batch_tensor_buffer)
 
 if(XRT_FOUND)
   add_executable(test_xrt_bo_tensor_buffer test/test_xrt_bo_tensor_buffer.cpp)
+  target_include_directories(test_xrt_bo_tensor_buffer
+                             PRIVATE ${XRT_INCLUDE_DIRS})
   target_link_libraries(test_xrt_bo_tensor_buffer ${COMPONENT_NAME}
-                        XRT::xrt_core XRT::xrt_coreutil ${PROJECT_NAME}::util)
+                        XRT::xrt_coreutil ${PROJECT_NAME}::util)
 endif(XRT_FOUND)
 
 add_executable(test_allocator test/test_allocator.cpp)
-target_link_libraries(test_allocator ${COMPONENT_NAME} ${PROJECT_NAME}::util
+target_link_libraries(test_allocator ${COMPONENT_NAME} absl::log_internal_check_op absl::log ${PROJECT_NAME}::util
                       ${CMAKE_THREAD_LIBS_INIT})

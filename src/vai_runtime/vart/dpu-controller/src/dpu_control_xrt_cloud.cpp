@@ -170,16 +170,14 @@ void DpuControllerXrtCloud::run(size_t device_core_idx, const uint64_t code,
   xrt_cu_->run(
       device_core_idx, func,
       // on_success
-      [device_core_idx, this](xclDeviceHandle handle,
-                              uint64_t cu_addr) -> void {
+      [device_core_idx, this]() -> void {
         if (ENV_PARAM(XLNX_SHOW_DPU_COUNTER)) {
           LOG(INFO) << "device_core_idx = " << device_core_idx << " "
                     << xdpu_get_counter(device_core_idx) << std::endl;
         }
       },
       // on failure
-      [device_core_idx, this](xclDeviceHandle handle,
-                              uint64_t cu_addr) -> void {
+      [device_core_idx, this]() -> void {
         LOG(FATAL) << "dpu timeout! "
                    << "device_core_idx = " << device_core_idx << "\n"
                    << xdpu_get_counter(device_core_idx);
@@ -192,9 +190,6 @@ size_t DpuControllerXrtCloud::get_num_of_dpus() const {
 
 size_t DpuControllerXrtCloud::get_device_id(size_t device_core_id) const {
   return xrt_cu_->get_device_id(device_core_id);
-}
-size_t DpuControllerXrtCloud::get_core_id(size_t device_core_id) const {
-  return xrt_cu_->get_core_id(device_core_id);
 }
 uint64_t DpuControllerXrtCloud::get_fingerprint(size_t device_core_id) const {
   return xrt_cu_->get_fingerprint(device_core_id);

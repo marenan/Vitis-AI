@@ -96,7 +96,7 @@ target_include_directories(
 if(BUILD_SHARED_LIBS)
     target_link_libraries(
       xir
-      PRIVATE protobuf::libprotobuf Threads::Threads ${CMAKE_DL_LIBS}
+      PRIVATE protobuf::libprotobuf absl::absl_log absl::log_internal_check_op Threads::Threads ${CMAKE_DL_LIBS}
       PUBLIC unilog::unilog)
     if(NOT MSVC)
       if(Protobuf_USE_STATIC_LIBS)

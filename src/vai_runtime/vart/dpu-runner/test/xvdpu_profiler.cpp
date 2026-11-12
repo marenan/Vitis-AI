@@ -65,40 +65,10 @@ static uint64_t align(uint64_t a, uint64_t b) {
   return (a / b + 1) * b;
 }
 
-static int xrtXclRead(xclDeviceHandle handle, uint32_t ipIndex, uint64_t offset,
-                      uint64_t offsetbase, uint32_t* datap) {
-  return xclRegRead(handle, ipIndex, offset, datap);
-}
-
-static int xrtXclWrite(xclDeviceHandle handle, uint32_t ipIndex,
-                       uint64_t offset, uint64_t offsetbase, uint32_t data) {
-  return xclRegWrite(handle, ipIndex, offset, data);
-}
-
-static void set_reg(xclDeviceHandle xcl_handle, uint32_t ip_index,
-                    uint64_t cu_base_addr, uint32_t offset, uint32_t value) {
-  auto read_result =
-      xrtXclWrite(xcl_handle, ip_index, offset, cu_base_addr, value);
-
-  CHECK_EQ(read_result, 0) << "xrtXclWrite has error!";
-}
-
-static uint32_t get_reg(xclDeviceHandle xcl_handle, uint32_t ip_index,
-                        uint64_t cu_base_addr, uint32_t offset) {
-  uint32_t value = 0;
-  auto read_result =
-      xrtXclRead(xcl_handle, ip_index, offset, cu_base_addr, &value);
-
-  CHECK_EQ(read_result, 0) << "xrtXclRead has error!";
-  return value;
-}
-
 static bo_size_t get_bo_size(const std::string& cu_name, size_t index) {
   bo_size_t ret;
   auto h = xir::XrtDeviceHandle::get_instance();
-  auto reg_44 =
-      get_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
-              h->get_cu_addr(cu_name, index), 0x44);
+  auto reg_44 = h->read_register(cu_name, index, 0x44);
   LOG_IF(INFO, ENV_PARAM(DEBUG_XVDPU_PROFILER))
       << "reg:0x44 : " << std::hex << "0x" << reg_44;
   auto batch_en = data_slice(reg_44, 0, 8);
@@ -138,44 +108,25 @@ static void init_profiler_reg(const std::string& cu_name, size_t index,
                               size_t rec_instr, size_t start_instr) {
   auto h = xir::XrtDeviceHandle::get_instance();
   // 0x58: PROF_DDR_ADDR_L
-  set_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
-          h->get_cu_addr(cu_name, index), 0x58, phy_addr & 0xFFFFFFFF);
+  h->write_register(cu_name, index, 0x58, phy_addr & 0xFFFFFFFF);
   // 0x5C: PROF_DDR_ADDR_H
-  set_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
-          h->get_cu_addr(cu_name, index), 0x5C, (phy_addr >> 32) & 0xFFFFFFFF);
+  h->write_register(cu_name, index, 0x5C, (phy_addr >> 32) & 0xFFFFFFFF);
   // 0xE8: PROF_DDR_JUMP_L
-  set_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
-          h->get_cu_addr(cu_name, index), 0xE8, single_batch_size & 0xFFFFFFFF);
+  h->write_register(cu_name, index, 0xE8, single_batch_size & 0xFFFFFFFF);
   // 0xEC: PROF_DDR_JUMP_H
-  set_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
-          h->get_cu_addr(cu_name, index), 0xEC,
-          (single_batch_size >> 32) & 0xFFFFFFFF);
+  h->write_register(cu_name, index, 0xEC,
+                    (single_batch_size >> 32) & 0xFFFFFFFF);
   // 0xE0: [7:4] PROF_REC_INSTR; [3:0] PROF_UP_MODE
-  set_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
-          h->get_cu_addr(cu_name, index), 0xE0,
-          ((rec_instr << 4) + 1) & 0xFFFFFFFF);
+  h->write_register(cu_name, index, 0xE0, ((rec_instr << 4) + 1) & 0xFFFFFFFF);
   // 0xE4: PROF_START_INSTR
-  set_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
-          h->get_cu_addr(cu_name, index), 0xE4, start_instr & 0xFFFFFFFF);
+  h->write_register(cu_name, index, 0xE4, start_instr & 0xFFFFFFFF);
   if (ENV_PARAM(DEBUG_XVDPU_PROFILER) >= 1) {
-    auto reg_58 =
-        get_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
-                h->get_cu_addr(cu_name, index), 0x58);
-    auto reg_5c =
-        get_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
-                h->get_cu_addr(cu_name, index), 0x5C);
-    auto reg_e8 =
-        get_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
-                h->get_cu_addr(cu_name, index), 0xE8);
-    auto reg_ec =
-        get_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
-                h->get_cu_addr(cu_name, index), 0xEC);
-    auto reg_e0 =
-        get_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
-                h->get_cu_addr(cu_name, index), 0xE0);
-    auto reg_e4 =
-        get_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
-                h->get_cu_addr(cu_name, index), 0xE4);
+    auto reg_58 = h->read_register(cu_name, index, 0x58);
+    auto reg_5c = h->read_register(cu_name, index, 0x5C);
+    auto reg_e8 = h->read_register(cu_name, index, 0xE8);
+    auto reg_ec = h->read_register(cu_name, index, 0xEC);
+    auto reg_e0 = h->read_register(cu_name, index, 0xE0);
+    auto reg_e4 = h->read_register(cu_name, index, 0xE4);
     LOG(INFO) << "reg:0x58 : " << std::hex << "0x" << reg_58;
     LOG(INFO) << "reg:0x5C : " << std::hex << "0x" << reg_5c;
     LOG(INFO) << "reg:0xE8 : " << std::hex << "0x" << reg_e8;
@@ -253,9 +204,7 @@ static void run_dpu(vart::Runner* runner,
 
 static bool check_finish_reg(const std::string& cu_name, size_t index) {
   auto h = xir::XrtDeviceHandle::get_instance();
-  auto reg_44 =
-      get_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
-              h->get_cu_addr(cu_name, index), 0x44);
+  auto reg_44 = h->read_register(cu_name, index, 0x44);
   return ((reg_44 & 0x00F00000) == 0x0);
 }
 

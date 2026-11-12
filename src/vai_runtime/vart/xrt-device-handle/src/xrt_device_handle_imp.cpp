@@ -19,13 +19,15 @@
 // for type conversion
 #  pragma warning(disable : 4267)
 #endif
+#if ! _WIN32
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
 #include "./xrt_device_handle_imp.hpp"
 
-#include <experimental/xrt-next.h>
+#include <experimental/xrt_system.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <xrt.h>
 
 #include <UniLog/UniLog.hpp>
 #include <algorithm>
@@ -42,14 +44,11 @@
 #include "vitis/ai/lock.hpp"
 #include "vitis/ai/simple_config.hpp"
 #include "vitis/ai/weak.hpp"
-#include "xrt_xcl_read.hpp"
 
 DEF_ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE, "0");
-DEF_ENV_PARAM(XLNX_DISABLE_CHECK_DEVICE_TYPE, "1");
 DEF_ENV_PARAM(XLNX_DISABLE_LOAD_XCLBIN, "0");
 DEF_ENV_PARAM_2(XLNX_ENABLE_DEVICES, "ALL", std::string);
 DEF_ENV_PARAM_2(XLNX_VART_FIRMWARE, "", std::string);
-DEF_ENV_PARAM_2(XLNX_DDR_OR_HBM, "", std::vector<std::string>);
 
 namespace {
 
@@ -82,85 +81,73 @@ static bool start_with(const std::string& a, const std::string& b) {
   return a.find(b) == 0u;
 }
 
-static const std::string my_get_kernel_name(const std::string& name) {
-  auto pos = name.find_first_of(':');
-  auto ret = name;
-  if (pos != std::string::npos) {
-    ret = name.substr(0, pos);
-  }
-  return ret;
-}
-
-static uint64_t my_get_fingerprint(const std::string& full_cu_name,
-                                   xclDeviceHandle handle, size_t ip_index,
-                                   uint64_t base) {
-  auto env_fingerprint = getenv((full_cu_name + ".fingerprint").c_str());
+static uint64_t my_get_fingerprint(const xrt::kernel* knl,
+                                   const std::string& cu_name) {
+  auto env_fingerprint = getenv((cu_name + ".fingerprint").c_str());
   if (env_fingerprint) {
     return std::stoul(env_fingerprint);
   }
-  uint32_t h_value = 0;
-  uint32_t l_value = 0;
-  uint64_t ret = 0u;
   uint64_t cu_offset = 0x1F0;
-  auto read_result =
-      xrtXclRead(handle, (uint32_t)ip_index, cu_offset, base, &l_value);
-  UNI_LOG_CHECK(read_result == 0, VART_XRT_READ_ERROR)
-      << "xrtXclRead has error!";
-  read_result = xrtXclRead(handle, (uint32_t)ip_index,
-                           cu_offset + sizeof(l_value), base, &h_value);
-  UNI_LOG_CHECK(read_result == 0, VART_XRT_READ_ERROR)
-      << "xrtXclRead has error!";
-  ret = h_value;
+  auto l_value = knl->read_register(cu_offset);
+  auto h_value = knl->read_register(cu_offset + sizeof(l_value));
+  uint64_t ret = h_value;
   ret = (ret << 32) + l_value;
   LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE))
-      << full_cu_name << " fingerprint: 0x" << std::hex << ret << std::dec
-      << std::hex << " 0x" << h_value << " 0x" << l_value << std::dec;
+      << cu_name << " fingerprint: 0x" << std::hex << ret << " with h_value"
+      << " 0x" << h_value << " and l_value 0x" << l_value << std::dec;
   return ret;
 }
+/*
+static void get_device_info(const xrt::device& device,
+                            XrtDeviceInfo& dev_info) {
+  dev_info.dev_bdf = device.get_info<xrt::info::device::bdf>();
+  // dev_info.dev_interface_uuid =
+  //     device.get_info<xrt::info::device::interface_uuid>();
+  dev_info.dev_kdma = device.get_info<xrt::info::device::kdma>();
+  dev_info.dev_max_frequency =
+      device.get_info<xrt::info::device::max_clock_frequency_mhz>();
+  dev_info.dev_m2m = device.get_info<xrt::info::device::m2m>();
+  dev_info.dev_name = device.get_info<xrt::info::device::name>();
+  dev_info.dev_nodma = device.get_info<xrt::info::device::nodma>();
+  dev_info.dev_offline = device.get_info<xrt::info::device::offline>();
+  dev_info.dev_electrical = device.get_info<xrt::info::device::electrical>();
+  dev_info.dev_thermal = device.get_info<xrt::info::device::thermal>();
+  dev_info.dev_mechanical = device.get_info<xrt::info::device::mechanical>();
+  dev_info.dev_memory = device.get_info<xrt::info::device::memory>();
+  dev_info.dev_platform = device.get_info<xrt::info::device::platform>();
+  dev_info.dev_pcie_info = device.get_info<xrt::info::device::pcie_info>();
+  dev_info.dev_host = device.get_info<xrt::info::device::host>();
+  dev_info.dev_aie = device.get_info<xrt::info::device::aie>();
+  dev_info.dev_aie_shim = device.get_info<xrt::info::device::aie_shim>();
+  // dev_info.dev_aie_mem = device.get_info<xrt::info::device::aie_mem>();
+  dev_info.dev_dynamic_regions =
+      device.get_info<xrt::info::device::dynamic_regions>();
+  dev_info.dev_vmr = device.get_info<xrt::info::device::vmr>();
 
-static std::vector<xclDeviceInfo2> get_all_device_info(size_t num_of_devices) {
-  std::vector<xclDeviceInfo2> devices;
-  devices.reserve(num_of_devices);
-  for (auto deviceIndex = 0u; deviceIndex < num_of_devices; ++deviceIndex) {
-    auto handle = xclOpen(deviceIndex, NULL, XCL_INFO);
-    xclDeviceInfo2 deviceInfo;
-    UNI_LOG_CHECK(xclGetDeviceInfo2(handle, &deviceInfo) == 0,
-                  VART_XRT_READ_ERROR)
-        << "Unable to obtain device information";
-    LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE) >= 2)
-        << "DSA = " << deviceInfo.mName << "\n"                         //
-        << "PCIe = GEN" << deviceInfo.mPCIeLinkSpeed << "x"             //
-        << deviceInfo.mPCIeLinkWidth << "\n"                            //
-        << "OCL Frequency = " << deviceInfo.mOCLFrequency[0] << " MHz"  //
-        << "\n"                                                         //
-        << "DDR Bank = " << deviceInfo.mDDRBankCount << "\n"            //
-        << "Device Temp = " << deviceInfo.mOnChipTemp << " C\n"         //
-        << "DeviceVersion = " << std::hex << "0x" << deviceInfo.mDeviceVersion
-        << std::dec << "\n"                                                  //
-        << "MIG Calibration = " << std::boolalpha << deviceInfo.mMigCalib    //
-        << "\n"                                                              //
-        << "mMagic = " << deviceInfo.mMagic << "\n"                          //
-        << "mHALMajorVersion = " << deviceInfo.mHALMajorVersion << "\n"      //
-        << "mHALMinorVersion = " << deviceInfo.mHALMinorVersion << "\n"      //
-        << "mVendorId = " << deviceInfo.mVendorId << "\n"                    //
-        << "mDeviceId = " << deviceInfo.mDeviceId << "\n"                    //
-        << "mSubsystemId = " << deviceInfo.mSubsystemId << "\n"              //
-        << "mSubsystemVendorId = " << deviceInfo.mSubsystemVendorId << "\n"  //
-        << "mDeviceVersion = " << deviceInfo.mDeviceVersion << "\n"          //
-        << "DDR memory size = " << deviceInfo.mDDRSize << "\n"               //
-        << "Minimum data alignment requirement for host buffers = "
-        << deviceInfo.mDataAlignment << "\n"  //
-        << "Total unused/available DDR memory =  " << deviceInfo.mDDRFreeSize
-        << " \n"  //
-        << "Minimum DMA buffer size = " << deviceInfo.mMinTransferSize
-        << "\n "  //
-        ;
-    devices.push_back(deviceInfo);
-    xclClose(handle);
-  }
-  return devices;
+  LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE) >= 2)
+      << "bdf = " << dev_info.dev_bdf << "\n"                            //
+      << "interface_uuid = " << dev_info.dev_interface_uuid << "\n"      //
+      << "kdma = " << dev_info.dev_kdma << "\n"                          //
+      << "max CL Frequency = " << dev_info.dev_max_frequency << "MHz\n"  //
+      << "m2m = " << std::boolalpha << dev_info.dev_m2m << "\n"          //
+      << "nodma = " << dev_info.dev_nodma << "\n"                        //
+      << "offline = " << dev_info.dev_offline << "\n"                    //
+      << "electrical = " << dev_info.dev_electrical << "\n"              //
+      << "thermal = " << dev_info.dev_thermal << "\n"                    //
+      << "mechanical = " << dev_info.dev_mechanical << "\n"              //
+      << "memory = " << dev_info.dev_memory << "\n"                      //
+      << "platform = " << dev_info.dev_platform << "\n"                  //
+      << "pcie_info = " << dev_info.dev_pcie_info << "\n"                //
+      << "host = " << dev_info.dev_host << "\n"                          //
+      << "aie = " << dev_info.dev_aie << "\n"                            //
+      << "aie_shim = " << dev_info.dev_aie_shim << "\n"                  //
+      << "aie_mem = " << dev_info.dev_aie_mem << "\n"                    //
+      << "dynamic_regions = " << dev_info.dev_dynamic_regions << "\n"    //
+      << "vmr = " << dev_info.dev_vmr << "\n"                            //
+      ;
+  return;
 }
-
+*/
 static std::pair<std::string, std::string> split_at(const std::string& str,
                                                     const char delimiter) {
   auto ret = std::pair<std::string, std::string>();
@@ -181,16 +168,17 @@ static std::vector<std::string> split_str(const std::string& str,
   }
   return list;
 }
-static std::vector<size_t> get_device_id_list(const size_t num_of_devices) {
+
+static std::vector<uint32_t> get_device_id_list(const uint32_t num_of_devices) {
   std::string enable_devices = ENV_PARAM(XLNX_ENABLE_DEVICES);
   if (enable_devices == "ALL") {
-    auto device_id_list = std::vector<size_t>(num_of_devices);
+    auto device_id_list = std::vector<uint32_t>(num_of_devices);
     std::iota(device_id_list.begin(), device_id_list.end(), 0);
     return device_id_list;
   }
-  auto device_id_list = std::vector<size_t>();
+  auto device_id_list = std::vector<uint32_t>();
   for (auto d : split_str(enable_devices, ',')) {
-    auto device_id = (size_t)std::stoi(d);
+    auto device_id = (uint32_t)std::stoi(d);
     if (device_id < num_of_devices) {
       device_id_list.push_back(device_id);
     }
@@ -198,63 +186,28 @@ static std::vector<size_t> get_device_id_list(const size_t num_of_devices) {
   return device_id_list;
 }
 
-static std::string do_detect_ddr_or_hbm(const std::string& dsa_name) {
-  std::string name = dsa_name;
-  std::transform(name.begin(), name.end(), name.begin(),
-                 [](std::string::value_type c) -> std::string::value_type {
-                   return (std::string::value_type)std::toupper(c);
-                 });
-  if (name.find("_U50_") != name.npos) {
-    return "HBM";
-  } else if (name.find("_U50LV_") != name.npos) {
-    return "HBM";
-  } else if (name.find("_U250_") != name.npos) {
-    return "HBM";
-  } else if (name.find("_U280_") != name.npos) {
-    return "HBM";
-  }
-  return "DDR";
-}
-
 XrtDeviceHandleImp::XrtDeviceHandleImp() {
   static_assert(sizeof(xuid_t) == SIZE_OF_UUID, "ERROR: UUID size mismatch");
-  auto num_of_devices = xclProbe();
+
+  auto num_of_devices = xrt::system::enumerate_devices();
   LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE))
       << "probe num of devices = " << num_of_devices;
-  auto devices = get_all_device_info(num_of_devices);
-  UNI_LOG_CHECK(devices.size() == num_of_devices, VART_SIZE_MISMATCH);
+  PCHECK(num_of_devices > 0) << "No devices can be used";
+
+  // get xclbin file
   auto filename = get_dpu_xclbin();
   LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE))
       << "open firmware " << filename;
-  binstream_ = std::make_unique<xir::XrtBinStream>(filename);
-  auto dsa_name = binstream_->get_dsa();
+  xclbin_ = std::make_unique<xrt::xclbin>(filename);
+  PCHECK(xclbin_ != nullptr) << "xclbin object initialized failed";
 
+  // select devices to be used
   auto device_id_list = get_device_id_list(num_of_devices);
-  auto& xlnx_ddr_or_hbm = ENV_PARAM(XLNX_DDR_OR_HBM);
-  auto detect_ddr_or_hbm = xlnx_ddr_or_hbm.empty();
-  if (detect_ddr_or_hbm) {
-    xlnx_ddr_or_hbm.resize(num_of_devices);
-  }
+  PCHECK(device_id_list.size() > 0) << "No device selected";
+  device_num_ = device_id_list.size();
 
-  for (const auto& deviceIndex : device_id_list) {
-    if (!ENV_PARAM(XLNX_DISABLE_CHECK_DEVICE_TYPE)) {
-#ifdef ENABLE_CLOUD
-      if (std::strcmp(devices[deviceIndex].mName, dsa_name.c_str()) != 0) {
-        LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE))
-            << "deviceIndex " << deviceIndex << " "  //
-            << "devices[deviceIndex].mName " << devices[deviceIndex].mName
-            << " "                             //
-            << "dsa_name " << dsa_name << " "  //
-            ;
-        continue;
-      }
-#endif
-    }
-    if (detect_ddr_or_hbm) {
-      xlnx_ddr_or_hbm[deviceIndex] =
-          do_detect_ddr_or_hbm(devices[deviceIndex].mName);
-    }
-
+  for (auto deviceIndex : device_id_list) {
+    // device lock
     auto mtx = vitis::ai::Lock::create("DPU_" + std::to_string(deviceIndex));
     mtx_.push_back(std::move(mtx));
     auto lock = std::make_unique<std::unique_lock<vitis::ai::Lock>>(
@@ -266,212 +219,197 @@ XrtDeviceHandleImp::XrtDeviceHandleImp() {
     }
     locks_.push_back(std::move(lock));
 
-    auto handle = xclOpen((unsigned int)deviceIndex, NULL, XCL_INFO);
+    auto device = std::make_shared<xrt::device>(deviceIndex);
+
+    // get device info, defer
+    XrtDeviceInfo dev_info;
+    // get_device_info(device, dev_info);
+
+    // load xclbin
+    auto xclbin_uuid = xclbin_->get_uuid();
     if (!ENV_PARAM(XLNX_DISABLE_LOAD_XCLBIN)) {
       LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE))
           << "load xclbin begin, device " << deviceIndex;
-      binstream_->burn(handle);
+      auto uuid = device->load_xclbin(*xclbin_);
+      PCHECK(uuid == xclbin_uuid) << "uuid loaded mismatched with xclbin uuid";
       LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE))
-          << "load xclbin success, device " << deviceIndex;
+          << "load xclbin success, device " << deviceIndex << " uuid "
+          << uuid.to_string();
     } else {
-      LOG(INFO) << "no load xclbin";
+      LOG(INFO) << "load xclbin skipped";
     }
-    auto uuid = binstream_->get_uuid();
-    xclClose(handle);
-    for (auto i = 0u; i < binstream_->get_num_of_cu(); ++i) {
-      auto cu_full_name = binstream_->get_cu(i);
+    // get uuid on device
+    auto device_uuid = device->get_xclbin_uuid();
+    LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE))
+        << "device[" << deviceIndex << "]:"                         //
+        << " uuid loaded on device is " << device_uuid.to_string()  //
+        << " and uuid of xclbin file is " << xclbin_uuid.to_string();
+
+    init_bank_index();
+
+    // process for cu on this device
+    auto xclbin_ips = xclbin_->get_ips();
+    auto cu_num = xclbin_ips.size();
+    PCHECK(cu_num > 0) << "no cus can be used";
+    for (auto i = 0u; i < cu_num; ++i) {
+      auto cu_full_name = xclbin_ips[i].get_name();
+      // only load dpu and sfm kernel
       if (cu_full_name.find("DPU") == std::string::npos &&
           cu_full_name.find("dpu") == std::string::npos &&
           cu_full_name.find("sfm") == std::string::npos) {
         continue;
       }
-      auto kernel_name = my_get_kernel_name(cu_full_name);
-      LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE))
-          << "cu[" << i << "] = " << cu_full_name << " cu_name=" << kernel_name;
-      auto& x = handles_[cu_full_name + ":" + std::to_string(deviceIndex)];
-      x.cu_base_addr = binstream_->get_cu_base_addr(i);
-      x.handle = xclOpen((unsigned int)deviceIndex, NULL, XCL_INFO);
-      int cu_index = -1;
-#if _MSC_VER
-      cu_index = i;  // TODO: on windows xclIPName2Index is not defined.
-#else
-#  ifdef HAS_xclIPName2Index_3
-      uint32_t dummy_id;
-      cu_index = xclIPName2Index(x.handle, cu_full_name.c_str(), &dummy_id);
-#  endif
-#  ifdef HAS_xclIPName2Index_2
-      cu_index = xclIPName2Index(x.handle, cu_full_name.c_str());
-#  endif
-#endif
 
-      UNI_LOG_CHECK(cu_index != -1, VART_XRT_READ_CU_ERROR)
-          << " Cannot get cu_index. cu name=" << cu_full_name;
-      x.cu_index = (size_t)cu_index;
-      x.ip_index = i;
-      x.full_name = cu_full_name;
-      std::tie(x.kernel_name, x.instance_name) = split_at(cu_full_name, ':');
-      // binstream_->burn(x.handle);  // need to load bin to get reg map.
-      x.cu_mask = (1u << x.cu_index);
-      x.device_id = deviceIndex;
-      x.core_id = i;
-      x.uuid = uuid;
-      auto r = xclOpenContext(x.handle, &uuid[0], x.cu_index, true);
-      PCHECK(r == 0) << "cannot open context! "
-                     << "cu_index " << x.cu_index << " "          //
-                     << "cu_base_addr " << x.cu_base_addr << " "  //
-          ;
-      // dpu read-only register range [0x10,0x200)
-      r = xclIPSetReadRange(x.handle, x.cu_index, 0x10, 0x1F0);
-      x.fingerprint = my_get_fingerprint(cu_full_name, x.handle, x.cu_index,
-                                         x.cu_base_addr);
-      PCHECK(r == 0) << "cannot set read range! "
-                     << "cu_index " << x.cu_index << " "          //
-                     << "cu_base_addr " << x.cu_base_addr << " "  //
-                     << "fingerprint " << std::hex << "0x"        //
-                     << x.fingerprint << std::dec << " "          //
-          ;
       LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE))
-          << " cu_handle " << x.handle                                      //
-          << " device_id " << x.device_id << " "                            //
-          << " full_name " << x.full_name << " "                            //
-          << " kernel_name " << x.kernel_name << " "                        //
-          << " instance_name " << x.instance_name << " "                    //
-          << " cu_mask " << x.cu_mask                                       //
-          << " cu_index " << x.cu_mask                                      //
-          << " cu_addr " << std::hex << "0x" << x.cu_base_addr << std::dec  //
-          << " fingerprint " << std::hex << "0x" <<                         //
-          x.fingerprint << std::dec << " "                                  //
+          << "device_index/cu_index " << deviceIndex << "/" << i
+          << " cu_full_name " << cu_full_name << " is loading... ";
+
+      auto& cu = cu_handles_[cu_full_name + ":" + std::to_string(deviceIndex)];
+      // device info
+      cu.device_index = deviceIndex;
+      cu.device_id = device_id_list[deviceIndex];
+      cu.uuid = std::make_shared<xrt::uuid>(device_uuid);
+      cu.dev_info = dev_info;
+      // cu info
+      cu.cu_full_name = cu_full_name;
+      std::tie(cu.cu_kernel_name, cu.cu_instance_name) =
+          split_at(cu_full_name, ':');
+      auto cu_name = cu.cu_kernel_name + ":{" + cu.cu_instance_name + "}";
+      // cu handle object
+      cu.device = device;
+      cu.kernel = std::make_unique<xrt::kernel>(*device, device_uuid, cu_name);
+      // dpu DPUCV2DX8G register range [0x10,0x500]
+      xrt::set_read_range(*cu.kernel, 0x10, 0x4F0);
+      cu.cu_fingerprint = my_get_fingerprint(cu.kernel.get(), cu_full_name);
+      LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE))
+          << "device_id " << cu.device_id << ", "           //
+          << "cu_full_name " << cu.cu_full_name << ", "     //
+          << std::hex                                       //
+          << "fingerprint 0x" << cu.cu_fingerprint << ", "  //
+          << "device handle 0x" << cu.device.get() << ", "  //
+          << "kernel handle 0x" << cu.kernel.get()          //
+          << std::dec                                       //
           ;
     }
   }
-  // TODO : check handles_ is not null
-  PCHECK(handles_.size() > 0) << "No device can use !";
+  PCHECK(cu_handles_.size() > 0) << "No device initialized";
 }  // namespace
 
 XrtDeviceHandleImp::~XrtDeviceHandleImp() {
   LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE))
-      << "handle is destroyed " << (void*)this << "num of devices "
-      << handles_.size();
-  if (handles_.empty()) {
-    return;
-  }
-  auto uuid = binstream_->get_uuid();
-  std::set<std::string> deleted{};
-  for (const auto& handle : handles_) {
-    auto& x = handle.second;
-    auto r = xclCloseContext(x.handle, &uuid[0], x.cu_index);
-    PCHECK(r == 0) << "cannot close context! "
-                   << " cu_mask " << x.cu_mask    //
-                   << " cu_index " << x.cu_index  //
-                   << " xcu_addr " << std::hex << "0x" << x.cu_base_addr
-                   << std::dec  //
-        ;
-
-    xclClose(x.handle);
-    LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE))
-        << " cu_handle " << x.handle                                      //
-        << " cu_mask " << x.cu_mask                                       //
-        << " cu_index " << x.cu_index                                     //
-        << " cu_addr " << std::hex << "0x" << x.cu_base_addr << std::dec  //
-        ;
-  }
+      << "handle is destroyed " << (void*)this << ", num of devices "
+      << cu_handles_.size();
 }
 
-const DeviceObject& XrtDeviceHandleImp::find_cu(const std::string& cu_name,
-                                                size_t core_idx) const {
-  return const_cast<XrtDeviceHandleImp*>(this)->find_cu(cu_name, core_idx);
-}
-DeviceObject& XrtDeviceHandleImp::find_cu(const std::string& cu_name,
-                                          size_t core_idx) {
+size_t XrtDeviceHandleImp::get_num_of_devices() const { return device_num_; }
+size_t XrtDeviceHandleImp::get_num_of_cus() const { return cu_handles_.size(); }
+size_t XrtDeviceHandleImp::get_num_of_cus(const std::string& cu_name) const {
   auto cnt = 0u;
-  DeviceObject* ret = nullptr;
-  for (auto& x : handles_) {
+  for (auto& x : cu_handles_) {
     if (start_with(x.first, cu_name)) {
-      if (cnt == core_idx) {
-        ret = &x.second;
-        break;
-      }
-      cnt = cnt + 1;
-    }
-  }
-  UNI_LOG_CHECK(ret != nullptr, VART_XRT_NULL_PTR)
-      << "cannot found cu handle!"
-      << "cu_name " << cu_name << " "    //
-      << "core_idx " << core_idx << " "  //
-      ;
-  return *ret;
-}
-
-xclDeviceHandle XrtDeviceHandleImp::get_handle(const std::string& cu_name,
-                                               size_t core_idx) {
-  return find_cu(cu_name, core_idx).handle;
-};
-
-size_t XrtDeviceHandleImp::get_cu_index(const std::string& cu_name,
-                                        size_t core_idx) const {
-  return find_cu(cu_name, core_idx).cu_index;
-}
-
-size_t XrtDeviceHandleImp::get_ip_index(const std::string& cu_name,
-                                        size_t core_idx) const {
-  return find_cu(cu_name, core_idx).ip_index;
-}
-
-unsigned int XrtDeviceHandleImp::get_cu_mask(const std::string& cu_name,
-                                             size_t core_idx) const {
-  return find_cu(cu_name, core_idx).cu_mask;
-}
-
-uint64_t XrtDeviceHandleImp::get_cu_addr(const std::string& cu_name,
-                                         size_t core_idx) const {
-  return find_cu(cu_name, core_idx).cu_base_addr;
-}
-
-unsigned int XrtDeviceHandleImp::get_num_of_cus(
-    const std::string& cu_name) const {
-  auto cnt = 0u;
-  for (auto& x : handles_) {
-    if (start_with(x.first, cu_name)) {
-      cnt = cnt + 1;
+      cnt++;
     }
   }
   return cnt;
 }
-std::string XrtDeviceHandleImp::get_cu_full_name(const std::string& cu_name,
-                                                 size_t device_core_idx) const {
-  return find_cu(cu_name, device_core_idx).full_name;
+
+size_t XrtDeviceHandleImp::get_device_index(const std::string& cu_name,
+                                            size_t cu_index) const {
+  return find_cu(cu_name, cu_index).device_index;
 }
-std::string XrtDeviceHandleImp::get_cu_kernel_name(
-    const std::string& cu_name, size_t device_core_idx) const {
-  return find_cu(cu_name, device_core_idx).kernel_name;
-}
-std::string XrtDeviceHandleImp::get_instance_name(
-    const std::string& cu_name, size_t device_core_idx) const {
-  return find_cu(cu_name, device_core_idx).instance_name;
-}
+
 size_t XrtDeviceHandleImp::get_device_id(const std::string& cu_name,
-                                         size_t device_core_idx) const {
-  return find_cu(cu_name, device_core_idx).device_id;
+                                         size_t cu_index) const {
+  return find_cu(cu_name, cu_index).device_id;
 }
 
-size_t XrtDeviceHandleImp::get_core_id(const std::string& cu_name,
-                                       size_t device_core_idx) const {
-  return find_cu(cu_name, device_core_idx).core_id;
+const void* XrtDeviceHandleImp::get_device_uuid(const std::string& cu_name,
+                                                size_t cu_index) const {
+  return find_cu(cu_name, cu_index).uuid.get();
 }
 
-uint64_t XrtDeviceHandleImp::get_fingerprint(const std::string& cu_name,
-                                             size_t device_core_idx) const {
-  return find_cu(cu_name, device_core_idx).fingerprint;
+std::string XrtDeviceHandleImp::get_cu_full_name(const std::string& cu_name,
+                                                 size_t cu_index) const {
+  return find_cu(cu_name, cu_index).cu_full_name;
 }
 
-unsigned int XrtDeviceHandleImp::get_bank_flags(const std::string& cu_name,
-                                                size_t device_core_idx) const {
-  return (binstream_->get_bank_id() | XCL_BO_FLAGS_CACHEABLE);
+std::string XrtDeviceHandleImp::get_cu_kernel_name(const std::string& cu_name,
+                                                   size_t cu_index) const {
+  return find_cu(cu_name, cu_index).cu_kernel_name;
 }
 
-std::array<unsigned char, SIZE_OF_UUID> XrtDeviceHandleImp::get_uuid(
-    const std::string& cu_name, size_t device_core_idx) const {
-  return find_cu(cu_name, device_core_idx).uuid;
+std::string XrtDeviceHandleImp::get_cu_instance_name(const std::string& cu_name,
+                                                     size_t cu_index) const {
+  return find_cu(cu_name, cu_index).cu_instance_name;
+}
+
+uint64_t XrtDeviceHandleImp::get_cu_fingerprint(const std::string& cu_name,
+                                                size_t cu_index) const {
+  return find_cu(cu_name, cu_index).cu_fingerprint;
+}
+
+const void* XrtDeviceHandleImp::get_device_handle(const std::string& cu_name,
+                                                  size_t cu_index) const {
+  return find_cu(cu_name, cu_index).device.get();
+}
+
+const void* XrtDeviceHandleImp::get_kernel_handle(const std::string& cu_name,
+                                                  size_t cu_index) const {
+  return find_cu(cu_name, cu_index).kernel.get();
+}
+
+uint32_t XrtDeviceHandleImp::get_memory_bank_index() const {
+  return bank_index_ | XCL_BO_FLAGS_CACHEABLE;
+}
+
+uint32_t XrtDeviceHandleImp::read_register(const std::string& cu_name,
+                                           size_t cu_index,
+                                           uint32_t offset) const {
+  return find_cu(cu_name, cu_index).kernel->read_register(offset);
+}
+
+void XrtDeviceHandleImp::write_register(const std::string& cu_name,
+                                        size_t cu_index, uint32_t offset,
+                                        uint32_t value) const {
+  return find_cu(cu_name, cu_index).kernel->write_register(offset, value);
+}
+
+void XrtDeviceHandleImp::init_bank_index() {
+  int32_t bank = -1;
+  auto* mem_topo = xclbin_->get_axlf_section<const mem_topology*>(MEM_TOPOLOGY);
+  for (int32_t idx = 0; idx < mem_topo->m_count; ++idx) {
+    if (mem_topo->m_mem_data[idx].m_used) {
+      bank = idx;
+      break;
+    }
+  }
+  PCHECK(bank >= 0) << "cannot find any valid bank index!";
+  bank_index_ = bank;
+  LOG_IF(INFO, ENV_PARAM(DEBUG_XRT_DEVICE_HANDLE))
+      << "find the first valid bank index " << bank_index_;
+
+  return;
+}
+
+const DeviceObject& XrtDeviceHandleImp::find_cu(const std::string& cu_name,
+                                                size_t cu_index) const {
+  auto cnt = 0u;
+  const DeviceObject* ret = nullptr;
+  for (auto& x : cu_handles_) {
+    if (start_with(x.first, cu_name)) {
+      if (cnt == cu_index) {
+        ret = &x.second;
+        break;
+      }
+      cnt++;
+    }
+  }
+  UNI_LOG_CHECK(ret != nullptr, VART_XRT_NULL_PTR)
+      << "cannot find cu handle with "
+      << "cu_name " << cu_name << " and "  //
+      << "cu_index " << cu_index << " "    //
+      ;
+  return *ret;
 }
 }  // namespace
 

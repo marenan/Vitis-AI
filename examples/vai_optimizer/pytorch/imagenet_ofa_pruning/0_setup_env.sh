@@ -15,4 +15,3 @@
 # limitations under the License.
 
 conda activate vitis-ai-optimizer_pytorch
-export XILINXD_LICENSE_FILE=/workspace/vai_optimizer.lic

@@ -16,37 +16,43 @@
  */
 
 #include <glog/logging.h>
-#include <xrt.h>
+#include <xrt/xrt_bo.h>
+#include <xrt/xrt_device.h>
+#include <xrt/xrt_kernel.h>
 
 #include <array>
 #include <iostream>
+
+#include "xir/xrt_device_handle.hpp"
 using namespace std;
 
-static uint64_t get_physical_address(const xclDeviceHandle& handle,
-                                     xclBufferHandle bo) {
-  xclBOProperties p{};
-  auto error_code = xclGetBOProperties(handle, bo, &p);
-  uint64_t phy = 0u;
-  if (error_code != 0) {
-    LOG(INFO) << "cannot xclGetBOProperties !";
-  }
-  phy = error_code == 0 ? p.paddr : -1;
-  return phy;
-}
 int main(int argc, char* argv[]) {
-  auto h = xclOpen(0, NULL, XCL_INFO);
-  auto bo1 = xclAllocBO(h, 25u * 1024 * 1024, 0, 0);
-  LOG(INFO) << "bo " << std::hex << "0x" << bo1 << std::dec;
+  auto device = xrt::device(0);
+  LOG(INFO) << "bo1 25u*1024*1024 alloating in memgroup(0)...";
+  auto bo1 = xrt::bo(device, 25u * 1024 * 1024, 0);
+  auto data1 = bo1.map<char*>();
+  auto phy1 = bo1.address();
+  LOG(INFO) << "bo1 data 0x" << std::hex << data1 << " phy 0x" << phy1
+            << std::dec << ", actual size " << bo1.size();
 
-  auto phy1 = get_physical_address(h, bo1);
-  LOG(INFO) << "phy " << std::hex << "0x" << phy1 << std::dec << " ";
-  auto bo2 = xclAllocBO(h, 4u * 1024 * 1024, 0, 0);
-  LOG(INFO) << "bo " << std::hex << "0x" << bo2 << std::dec;
+  LOG(INFO) << "bo2 4u*1024*1024 alloating in memgroup(1)...";
+  auto bo2 = xrt::bo(device, 4u * 1024 * 1024, 1);
+  auto data2 = bo2.map<void*>();
+  auto phy2 = bo2.address();
+  LOG(INFO) << "bo2 data 0x" << std::hex << data2 << " phy 0x" << phy2
+            << std::dec << ", actual size " << bo2.size();
 
-  auto phy2 = get_physical_address(h, bo2);
-  LOG(INFO) << "phy " << std::hex << "0x" << phy2 << std::dec << " ";
-  xclFreeBO(h, bo1);
-  xclFreeBO(h, bo2);
-  xclClose(h);
+  auto h = xir::XrtDeviceHandle::get_instance();
+  std::string cu = "DPU";
+  auto* dev = reinterpret_cast<const xrt::device*>(h->get_device_handle(cu, 0));
+  auto* kel = reinterpret_cast<const xrt::kernel*>(h->get_kernel_handle(cu, 0));
+  LOG(INFO) << "bo3 8u*1024*1024 alloating in memgroup(" << kel->group_id(2)
+            << ")...";
+  auto bo3 = xrt::bo(*dev, 8u * 1024 * 1024, kel->group_id(2));
+  auto data3 = bo3.map<void*>();
+  auto phy3 = bo3.address();
+  LOG(INFO) << "bo3 data 0x" << std::hex << data3 << " phy 0x" << phy3
+            << std::dec << ", actual size " << bo3.size();
+
   return 0;
 }

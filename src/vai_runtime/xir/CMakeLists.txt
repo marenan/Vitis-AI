@@ -17,7 +17,7 @@
 cmake_minimum_required(VERSION 3.9)
 project(
   xir
-  VERSION 3.5.0
+  VERSION 5.0.0
   LANGUAGES C CXX)
 
 include(${PROJECT_SOURCE_DIR}/cmake/VitisCommon.cmake)
@@ -36,6 +36,7 @@ if(NOT TARGET unilog::unilog)
   find_package(unilog REQUIRED)
 endif()
 
+find_package(absl REQUIRED)
 find_package(Boost REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(Threads REQUIRED)

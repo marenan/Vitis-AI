@@ -13,22 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <experimental/xrt-next.h>
 #include <glog/logging.h>
-#include <xrt.h>
-
 #include <iomanip>
 #include <iostream>
-using namespace std;
+
 #include "vitis/ai/parse_value.hpp"
 #include "xir/xrt_device_handle.hpp"
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+using namespace std;
 
-int set_reg(xclDeviceHandle xcl_handle, uint32_t cu_index, uint32_t offset,
-            uint32_t value) {
-  return xclRegWrite(xcl_handle, cu_index, offset, value);
-}
-void xdpu_set_reg(xclDeviceHandle xcl_handle) {
+void xdpu_set_reg(const xir::XrtDeviceHandle* handle, const std::string& cu_name,
+                  size_t cu_index) {
   struct reg {
     uint32_t addr;
     uint32_t value;
@@ -49,13 +44,8 @@ void xdpu_set_reg(xclDeviceHandle xcl_handle) {
     regs.emplace_back(reg{(uint32_t)offset_add2, (uint32_t)offset_val2, name});
   }
   stream.close();
-  uint32_t cu_index = 0u;
   for (const auto& reg : regs) {
-    int ret = set_reg(xcl_handle, cu_index, reg.addr, reg.value);
-    if (ret < 0) {
-      LOG(INFO) << "write error! ret is : " << ret;
-      exit(ret);
-    }
+    handle->write_register(cu_name, cu_index, reg.addr, reg.value);
     LOG_IF(INFO, true) << "0x" << std::hex << reg.addr << "\t"  //
                        << std::setfill(' ') << std::hex << "0x" << std::setw(16)
                        << std::left << reg.value << " "  //
@@ -69,8 +59,6 @@ int main(int argc, char* argv[]) {
   auto h = xir::XrtDeviceHandle::get_instance();
   auto cu_name = std::string(argv[1]);
   auto cu_index = std::stoi(std::string(argv[2]));
-  LOG(INFO) << "h->get_handle() " << h->get_handle(cu_name, cu_index) << " "  //
-      ;
-  xdpu_set_reg(h->get_handle(cu_name, cu_index));
+  xdpu_set_reg(h.get(), cu_name, cu_index);
   return 0;
 }

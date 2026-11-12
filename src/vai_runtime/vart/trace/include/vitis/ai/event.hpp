@@ -21,6 +21,7 @@
 #include <sstream>
 #include <string>
 #include <utility>
+#include <cstdint>
 #if _WIN32
 using MY_DWORD = uint32_t;
 // MSVC NOTE: it is dangerous to include windows.h in public header files. it

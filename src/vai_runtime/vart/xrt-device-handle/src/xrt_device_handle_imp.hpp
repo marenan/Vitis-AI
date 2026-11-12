@@ -14,7 +14,12 @@
  * limitations under the License.
  */
 #pragma once
+// #include <experimental/xrt_ip.h>
+#include <experimental/xrt_xclbin.h>
 #include <glog/logging.h>
+#include <xrt/xrt_device.h>
+#include <xrt/xrt_kernel.h>
+#include <xrt/xrt_uuid.h>
 
 #include <cstring>
 #include <fstream>
@@ -24,23 +29,46 @@
 #include <string>
 #include <vitis/ai/lock.hpp>
 
-#include "./xrt_bin_stream.hpp"
 #include "xir/xrt_device_handle.hpp"
 namespace {
+// xrt device info
+struct XrtDeviceInfo {
+  std::string dev_name;
+  std::string dev_bdf;
+  xrt::uuid dev_interface_uuid;
+  uint32_t dev_kdma;
+  unsigned long dev_max_frequency;  // mhz
+  bool dev_m2m;
+  bool dev_nodma;
+  bool dev_offline;
+  std::string dev_electrical;
+  std::string dev_thermal;
+  std::string dev_mechanical;
+  std::string dev_memory;
+  std::string dev_platform;
+  std::string dev_pcie_info;
+  std::string dev_host;
+  std::string dev_aie;
+  std::string dev_aie_shim;
+  std::string dev_aie_mem;
+  std::string dev_dynamic_regions;
+  std::string dev_vmr;
+};
+
 struct DeviceObject {
-  uint64_t cu_base_addr;
-  size_t cu_index;
-  size_t ip_index;
-  unsigned int cu_mask;
-  xclDeviceHandle handle;
-  std::string full_name;
-  std::string kernel_name;  // cu_name?
-  std::string instance_name;
+  // device info
+  size_t device_index;
   size_t device_id;
-  size_t core_id;
-  uint64_t fingerprint;
-  unsigned int bank_flags;
-  std::array<unsigned char, SIZE_OF_UUID> uuid;
+  std::shared_ptr<xrt::uuid> uuid;
+  XrtDeviceInfo dev_info;
+  // cu info
+  std::string cu_full_name;
+  std::string cu_kernel_name;
+  std::string cu_instance_name;
+  uint64_t cu_fingerprint;
+  // cu handle object
+  std::shared_ptr<xrt::device> device;
+  std::unique_ptr<xrt::kernel> kernel;
 };
 
 class XrtDeviceHandleImp : public xir::XrtDeviceHandle {
@@ -48,49 +76,47 @@ class XrtDeviceHandleImp : public xir::XrtDeviceHandle {
   XrtDeviceHandleImp();
   virtual ~XrtDeviceHandleImp();
 
-  virtual xclDeviceHandle get_handle(const std::string& cu_name,
-                                     size_t core_idx) override;
-  virtual size_t get_cu_index(const std::string& cu_name,
-                              size_t core_idx) const override;
-  virtual size_t get_ip_index(const std::string& cu_name,
-                              size_t core_idx) const override;
-  virtual unsigned int get_cu_mask(const std::string& cu_name,
-                                   size_t core_idx) const override;
-  virtual uint64_t get_cu_addr(const std::string& cu_name,
-                               size_t core_idx) const override;
-  virtual unsigned int get_num_of_cus(
-      const std::string& cu_name) const override;
-
-  virtual std::string get_cu_full_name(const std::string& cu_name,
-                                       size_t core_idx) const override;
-  virtual std::string get_cu_kernel_name(const std::string& cu_name,
-                                         size_t core_idx) const override;
-  virtual std::string get_instance_name(const std::string& cu_name,
-                                        size_t core_idx) const override;
+  virtual size_t get_num_of_devices() const override;
+  virtual size_t get_num_of_cus() const override;
+  virtual size_t get_num_of_cus(const std::string& cu_name) const override;
+  virtual size_t get_device_index(const std::string& cu_name,
+                                  size_t cu_index) const override;
   virtual size_t get_device_id(const std::string& cu_name,
-                               size_t core_idx) const override;
-  virtual size_t get_core_id(const std::string& cu_name,
-                             size_t core_idx) const override;
-
-  virtual uint64_t get_fingerprint(const std::string& cu_name,
-                                   size_t core_idx) const override;
-  virtual unsigned int get_bank_flags(const std::string& cu_name,
-                                      size_t core_idx) const override;
-  virtual std::array<unsigned char, SIZE_OF_UUID> get_uuid(
-      const std::string& cu_name, size_t core_idx) const override;
+                               size_t cu_index) const override;
+  virtual const void* get_device_uuid(const std::string& cu_name,
+                                      size_t cu_index) const override;
+  virtual std::string get_cu_full_name(const std::string& cu_name,
+                                       size_t cu_index) const override;
+  virtual std::string get_cu_kernel_name(const std::string& cu_name,
+                                         size_t cu_index) const override;
+  virtual std::string get_cu_instance_name(const std::string& cu_name,
+                                           size_t cu_index) const override;
+  virtual uint64_t get_cu_fingerprint(const std::string& cu_name,
+                                      size_t cu_index) const override;
+  virtual const void* get_device_handle(const std::string& cu_name,
+                                        size_t cu_index) const override;
+  virtual const void* get_kernel_handle(const std::string& cu_name,
+                                        size_t cu_index) const override;
+  virtual uint32_t get_memory_bank_index() const override;
+  virtual uint32_t read_register(const std::string& cu_name, size_t cu_index,
+                                 uint32_t offset) const override;
+  virtual void write_register(const std::string& cu_name, size_t cu_index,
+                              uint32_t offset, uint32_t value) const override;
 
  private:
   XrtDeviceHandleImp(const XrtDeviceHandleImp& rhs) = delete;
   XrtDeviceHandleImp& operator=(const XrtDeviceHandleImp& rhs) = delete;
 
  private:
-  DeviceObject& find_cu(const std::string& cu_name, size_t core_idx);
   const DeviceObject& find_cu(const std::string& cu_name,
-                              size_t core_idx) const;
+                              size_t cu_index) const;
+  void init_bank_index();
 
  private:
-  std::map<std::string, DeviceObject> handles_;
-  std::unique_ptr<xir::XrtBinStream> binstream_;
+  size_t device_num_;
+  uint32_t bank_index_;
+  std::unique_ptr<xrt::xclbin> xclbin_;
+  std::map<std::string, DeviceObject> cu_handles_;
 
   std::vector<std::unique_ptr<vitis::ai::Lock>> mtx_;
   std::vector<std::unique_ptr<std::unique_lock<vitis::ai::Lock>>> locks_;

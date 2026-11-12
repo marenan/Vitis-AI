@@ -17,9 +17,9 @@
 #include <memory>
 
 #include "./xrt_cu.hpp"
+#include "xir/buffer_object.hpp"
 #include "xir/dpu_controller.hpp"
 #include "xir/xrt_device_handle.hpp"
-#include "xir/buffer_object.hpp"
 class ert_start_kernel_cmd;
 
 class DpuControllerXrtXv2Dpu : public xir::DpuController {
@@ -35,10 +35,9 @@ class DpuControllerXrtXv2Dpu : public xir::DpuController {
 
   virtual size_t get_num_of_dpus() const override;
   virtual size_t get_device_id(size_t device_core_id) const override;
-  virtual size_t get_core_id(size_t device_core_id) const override;
   virtual uint64_t get_fingerprint(size_t device_core_id) const override;
   virtual size_t get_batch_size(size_t device_core_id) const override;
-  virtual size_t get_size_of_gen_regs(size_t device_core_id) const;
+  virtual size_t get_size_of_gen_regs(size_t device_core_id) const override;
   virtual std::string get_full_name(size_t device_core_id) const override;
   virtual std::string get_kernel_name(size_t device_core_id) const override;
   virtual std::string get_instance_name(size_t device_core_id) const override;

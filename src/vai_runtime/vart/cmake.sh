@@ -21,8 +21,9 @@ project_name=$(basename ${script_path})
 
 # cmake args
 declare -a args
-args+=(-DBUILD_TEST=ON)
-args+=(-DENABLE_DPU_RUNNER=ON)
+args+=(-DBUILD_TEST=OFF)
+args+=(-DENABLE_CPU_RUNNER=ON)
+args+=(-DENABLE_SIM_RUNNER=OFF)
 args+=(-DBUILD_SHARED_LIBS=ON)
 
 # parse options
@@ -45,7 +46,7 @@ while true; do
 	--type)
 	    shift
 	    case "$1" in
-		release) build_type=Release;;
+		release) build_type=RelWithDebInfo;;
 		debug) build_type=Debug;;
 		*) echo "Invalid build type \"$1\"! try --help"; exit 1;;
 	    esac
@@ -103,7 +104,7 @@ else
     echo "Cross-platform building..."
     echo "Found target sysroot ${OECORE_TARGET_SYSROOT}"
     target_info=${OECORE_TARGET_OS}.${OECORE_SDK_VERSION}.${OECORE_TARGET_ARCH}.${build_type}
-    install_prefix_default=${OECORE_TARGET_SYSROOT}/install/${build_type}
+    install_prefix=${OECORE_TARGET_SYSROOT}/install/${build_type}
     args+=(-DCMAKE_TOOLCHAIN_FILE=${OECORE_NATIVE_SYSROOT}/usr/share/cmake/OEToolchainConfig.cmake)
     args+=(-DCMAKE_PREFIX_PATH=/install/${build_type})
 fi

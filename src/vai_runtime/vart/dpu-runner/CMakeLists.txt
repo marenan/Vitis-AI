@@ -22,7 +22,7 @@ set(DEPS_PRIVATE xir::xir unilog::unilog dpu-controller xrt-device-handle
                  runner-assistant trace)
 
 if(XRT_FOUND)
-  list(APPEND DEPS_PRIVATE XRT::xrt_core XRT::xrt_coreutil)
+  list(APPEND DEPS_PRIVATE XRT::xrt_coreutil)
 endif(XRT_FOUND)
 
 set(MY_PROJECT_SOURCES

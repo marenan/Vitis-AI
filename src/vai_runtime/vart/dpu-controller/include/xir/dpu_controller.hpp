@@ -45,11 +45,14 @@ class DpuController {
 
  public:
   virtual size_t get_num_of_dpus() const = 0;
-  // convert a device_core_idx to a device_id, i.e. board idx
   virtual size_t get_device_id(size_t device_core_id) const = 0;
-  virtual size_t get_core_id(size_t device_core_id) const = 0;
+  virtual size_t get_core_id(size_t device_core_id) const {
+    return device_core_id;
+  }
   virtual uint64_t get_fingerprint(size_t device_core_id) const = 0;
-  virtual uint64_t get_device_hwconuter(size_t device_core_id) const { return 0; };
+  virtual uint64_t get_device_hwconuter(size_t device_core_id) const {
+    return 0;
+  };
   virtual size_t get_batch_size(size_t device_core_id) const { return 1; }
   virtual std::string get_full_name(size_t device_core_id) const;
   virtual std::string get_kernel_name(size_t device_core_id) const;

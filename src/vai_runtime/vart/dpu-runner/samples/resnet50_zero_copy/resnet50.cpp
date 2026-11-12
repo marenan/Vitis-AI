@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 #include <glog/logging.h>
-#include <xrt.h>
+#include <xrt/xrt_bo.h>
+#include <xrt/xrt_device.h>
 
 #include <algorithm>
 #include <cmath>
@@ -77,28 +78,17 @@ static void setImageBGR(const cv::Mat& image, void* data1, float scale) {
   }
 }
 
-static uint64_t get_physical_address(const xclDeviceHandle& handle,
-                                     const unsigned int bo) {
-  xclBOProperties p;
-  auto error_code = xclGetBOProperties(handle, bo, &p);
-  uint64_t phy = 0u;
-  if (error_code != 0) {
-    LOG(INFO) << "cannot xclGetBOProperties !";
-  }
-  phy = error_code == 0 ? p.paddr : -1;
-  return phy;
-}
-
 static void run_user_specific_ip(uint64_t dpu_output_phy_addr, unsigned int cls,
                                  unsigned int group, int fixpos) {
   // allocate memory.
   auto device_id = 0;
-  auto handle = xclOpen(device_id, NULL, XCL_INFO);
-  CHECK(handle != XRT_NULL_HANDLE);
-  auto bo_handle = xclAllocBO(handle, 1u * 1024u * 1024u, 0, 0);
-  CHECK(bo_handle != XRT_NULL_BO);
-  auto phy_addr_for_softmax = get_physical_address(handle, bo_handle);
-  auto bo_addr = xclMapBO(handle, bo_handle, true);
+  // not sure if the device is shared by multiple device objects
+  // if not, should get the device from XrtDeviceHandle by get_instance
+  auto device = xrt::device(device_id);
+  auto bo = xrt::bo(device, 1u * 1024u * 1024u, 0);
+  auto phy_addr_for_softmax = bo.address();
+  CHECK(phy_addr_for_softmax != 0);
+  auto bo_addr = bo.map<float*>();
   CHECK(bo_addr != nullptr);
   auto sfm_controller = xir::SfmController::get_instance();
   auto fmap_size = cls * group;
@@ -108,8 +98,7 @@ static void run_user_specific_ip(uint64_t dpu_output_phy_addr, unsigned int cls,
   const uint32_t offset = 0u;
   sfm_controller->run_xrt_cu(core_idx, dpu_output_phy_addr, cls, group, fixpos,
                              phy_addr_for_softmax, offset);
-  xclSyncBO(handle, bo_handle, XCL_BO_SYNC_BO_FROM_DEVICE,
-            fmap_size * sizeof(float), 0u);
+  bo.sync(XCL_BO_SYNC_BO_FROM_DEVICE, fmap_size * sizeof(float), 0u);
   dump_out("softmax_out_resnet50.bin", (void*)bo_addr, cls * sizeof(float));
   {
     // sorting
@@ -117,9 +106,6 @@ static void run_user_specific_ip(uint64_t dpu_output_phy_addr, unsigned int cls,
     // print the result
     print_topk(topk_value);
   }
-  xclUnmapBO(handle, bo_handle, bo_addr);
-  xclFreeBO(handle, bo_handle);
-  xclClose(handle);
   return;
 }
 

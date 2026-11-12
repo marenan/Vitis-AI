@@ -14,7 +14,7 @@
 # limitations under the License.
 #
 cmake_minimum_required(VERSION 3.5)
-project(target-factory VERSION 3.5.0 LANGUAGES C CXX)
+project(target-factory VERSION 5.0.0 LANGUAGES C CXX)
 
 include(${PROJECT_SOURCE_DIR}/cmake/VitisCommon.cmake)
 
@@ -34,7 +34,7 @@ find_package(Protobuf REQUIRED)
 if(NOT TARGET unilog::unilog)
   find_package(unilog REQUIRED)
 endif()
-
+find_package(absl REQUIRED)
 add_subdirectory(src)
 
 file(RELATIVE_PATH REL_INCLUDE_DIR

@@ -26,11 +26,7 @@ namespace vart {
 // avoid dependency on XRT
 struct xrt_bo_t {
   void* xrt_handle;
-#ifdef _WIN32
   void* xrt_bo_handle;
-#else
-  unsigned int xrt_bo_handle;
-#endif
 };
 enum class reg_type_t : int {
   INVALID,     //

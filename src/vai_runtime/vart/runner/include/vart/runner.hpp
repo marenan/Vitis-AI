@@ -40,7 +40,7 @@ class BaseRunner {
    *
    * @param output outputs with a customized type
    *
-   * @return pair<jobid, status> status 0 for exit successfully, others for
+   * @return pair<jodid, status> status 0 for exit successfully, others for
    * customized warnings or errors
    *
    */
@@ -173,7 +173,7 @@ class Runner : public BaseRunner<const std::vector<TensorBuffer*>&> {
    * @param output A vector of TensorBuffer create by all output tensors of
    * runner.
    *
-   * @return pair<jobid, status> status 0 for exit successfully, others for
+   * @return pair<jodid, status> status 0 for exit successfully, others for
    * customized warnings or errors
    *
    */

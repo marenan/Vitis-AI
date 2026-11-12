@@ -32,45 +32,7 @@ add_library(
 if(XRT_FOUND)
   set(CMAKE_REQUIRED_INCLUDES "${XRT_INCLUDE_DIRS}")
   set(CMAKE_REQUIRED_LIBRARIES "${XRT_CORE_LIBRARIES}")
-  include(CheckCXXSourceCompiles)
-  if(MSVC)
-    # linking error on windows
-    set(HAS_xclIPName2Index_3 FALSE)
-    set(HAS_xclIPName2Index_2 TRUE)
-  else(MSVC)
-    check_cxx_source_compiles(
-      "#include <xrt.h>
- #include <experimental/xrt-next.h>
- int main(int argc, char * argv[]) {return xclIPName2Index(NULL, NULL, NULL);}
-"
-      HAS_xclIPName2Index_3)
-    check_cxx_source_compiles(
-      "#include <xrt.h>
- #include <experimental/xrt-next.h>
- int main(int argc, char * argv[]) {return xclIPName2Index(NULL, NULL);}
-"
-      HAS_xclIPName2Index_2)
-  endif(MSVC)
-  set(HAS_xclIPName2Index FALSE)
-  if(HAS_xclIPName2Index_3)
-    set(HAS_xclIPName2Index TRUE)
-    target_compile_definitions(${COMPONENT_NAME}
-                               PRIVATE -DHAS_xclIPName2Index_3)
-  endif(HAS_xclIPName2Index_3)
-  if(HAS_xclIPName2Index_2)
-    set(HAS_xclIPName2Index TRUE)
-    target_compile_definitions(${COMPONENT_NAME}
-                               PRIVATE -DHAS_xclIPName2Index_2)
-  endif(HAS_xclIPName2Index_2)
-  if(NOT HAS_xclIPName2Index)
-    message(FATAL_ERROR "cannot find xclIPName2Index")
-  endif(NOT HAS_xclIPName2Index)
   target_sources(${COMPONENT_NAME} PRIVATE ${XCLBIN_SRCS})
-endif(XRT_FOUND)
-
-if(XRT_FOUND)
-  target_sources(${COMPONENT_NAME} PRIVATE src/xrt_bin_stream.hpp
-                                           src/xrt_bin_stream.cpp)
 endif(XRT_FOUND)
 
 # if(butler_FOUND) target_sources (${COMPONENT_NAME} PRIVATE
@@ -93,8 +55,7 @@ target_link_libraries(
   PRIVATE ${CMAKE_THREAD_LIBS_INIT} Boost::filesystem
   PUBLIC glog::glog util)
 if(XRT_FOUND)
-  target_link_libraries(${COMPONENT_NAME} PRIVATE XRT::xrt_core
-                                                  XRT::xrt_coreutil)
+  target_link_libraries(${COMPONENT_NAME} PRIVATE XRT::xrt_coreutil uuid)
 endif(XRT_FOUND)
 
 target_include_directories(
@@ -121,10 +82,11 @@ install(
   COMPONENT dpu
   DESTINATION include/xir)
 
-if(XRT_FOUND)
+set(enable_test ON)
+if(XRT_FOUND AND enable_test)
   add_executable(xrt_read_register test/read_counter.cpp)
-  target_link_libraries(xrt_read_register ${COMPONENT_NAME} XRT::xrt_core
-                        XRT::xrt_coreutil glog::glog)
+  target_link_libraries(xrt_read_register ${COMPONENT_NAME} XRT::xrt_coreutil
+                        glog::glog)
   install(
     TARGETS xrt_read_register
     RUNTIME DESTINATION bin
@@ -145,13 +107,13 @@ else()
     RENAME reg.conf)
 endif()
 
-if(XRT_FOUND)
+if(XRT_FOUND AND enable_test)
   add_executable(test_xrt_device_handle test/test_xrt_device_handle.cpp)
-  target_link_libraries(test_xrt_device_handle ${COMPONENT_NAME} XRT::xrt_core
+  target_link_libraries(test_xrt_device_handle ${COMPONENT_NAME}
                         XRT::xrt_coreutil glog::glog)
   install(TARGETS test_xrt_device_handle DESTINATION bin)
-  if(BUILD_TEST)
 
+  if(BUILD_TEST)
     # add_executable(write_counter test/write_counter.cpp)
     # target_link_libraries(write_counter ${COMPONENT_NAME} XRT::xrt_core
     # XRT::xrt_coreutil glog::glog)
@@ -161,15 +123,20 @@ if(XRT_FOUND)
                           XRT::xrt_coreutil glog::glog)
 
     if(NOT MSVC)
-    add_executable(test_ecmd test/test_ecmd.cpp)
-    target_link_libraries(test_ecmd ${COMPONENT_NAME} XRT::xrt_core
-                          XRT::xrt_coreutil -lpthread)
+      add_executable(test_xrt_api test/test_xrt_api.cpp)
+      target_link_libraries(test_xrt_api ${COMPONENT_NAME} XRT::xrt_core
+                            XRT::xrt_coreutil glog::glog)
+
+      add_executable(test_ecmd test/test_ecmd.cpp)
+      target_link_libraries(test_ecmd ${COMPONENT_NAME} XRT::xrt_core
+                            XRT::xrt_coreutil -lpthread)
     endif(NOT MSVC)
-    add_executable(test_bin_stream test/test_bin_stream.cpp)
-    target_link_libraries(test_bin_stream ${COMPONENT_NAME} XRT::xrt_core
-                          XRT::xrt_coreutil glog::glog)
+    # add_executable(test_bin_stream test/test_bin_stream.cpp)
+    # target_link_libraries(test_bin_stream ${COMPONENT_NAME} XRT::xrt_core
+    # XRT::xrt_coreutil glog::glog)
   endif()
   add_executable(test_alloc_bo test/test_alloc_bo.cpp)
-  target_link_libraries(test_alloc_bo ${COMPONENT_NAME} XRT::xrt_core
-                        XRT::xrt_coreutil glog::glog)
+  target_include_directories(test_alloc_bo PRIVATE ${XRT_INCLUDE_DIRS})
+  target_link_libraries(test_alloc_bo ${COMPONENT_NAME} XRT::xrt_coreutil
+                        glog::glog)
 endif()

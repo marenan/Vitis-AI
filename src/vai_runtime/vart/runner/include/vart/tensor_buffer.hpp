@@ -126,11 +126,11 @@ class TensorBuffer {
 
  public:
   /**
-   * @brief Get the data address of the index and the 
+   * @brief Get the data address of the index and the
    *     size of the data available for use.
    * @param idx The index of the data to be accessed,
    * its dimension same as the tensor shape.
-   * @return A pair of the data address of the index 
+   * @return A pair of the data address of the index
    *  and the size of the data available for use in byte unit.
   
    Sample code:
@@ -165,11 +165,11 @@ class TensorBuffer {
    */
   virtual location_t get_location() const { return location_t::HOST_VIRT; }
   /**
-   * @brief Get the data physical address of the index 
+   * @brief Get the data physical address of the index
    * and the size of the data available for use.
    * @param idx The index of the data to be accessed,
    * its dimension same to the tensor shape.
-   * @return A pair of the data physical address of the index 
+   * @return A pair of the data physical address of the index
    * and the size of the data available for use in byte unit.
 
    Sample code:  
@@ -246,7 +246,7 @@ class TensorBuffer {
        tb_from->copy_to_host(batch, reinterpret_cast<void*>(data),
                            tensor_size, 0u);
    }
-   @endcode 
+   @endcode
    */
   virtual void copy_to_host(size_t batch_idx, void* buf, size_t size,
                             size_t offset);
@@ -266,12 +266,8 @@ class TensorBuffer {
 };
 
 struct XclBo {
-  void* xcl_handle;
-#ifdef _WIN32
-  void* bo_handle;
-#else
-  unsigned int bo_handle;
-#endif
+  const void* xcl_handle;
+  const void* bo_handle;
 };
 
 class TensorBufferExt : public TensorBuffer {

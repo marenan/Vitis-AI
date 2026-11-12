@@ -15,7 +15,8 @@
  */
 
 #include <glog/logging.h>
-#include <xrt.h>
+#include <xrt/xrt_bo.h>
+#include <xrt/xrt_device.h>
 
 #include <cmath>
 #include <iomanip>
@@ -34,40 +35,24 @@
 
 struct Simulate_Host_Phy {
  public:
-  Simulate_Host_Phy(xclDeviceHandle xcl_handle, size_t size)
-      : handle_{xcl_handle}, size_{size} {
-    bo_ = xclAllocBO(xcl_handle, size, 0, 0);
-    CHECK(bo_ != XRT_NULL_BO);
-    data_ = (void*)xclMapBO(xcl_handle, bo_, true);
-    CHECK(nullptr != (void*)data_);
+  Simulate_Host_Phy(const xrt::device& device, size_t size) : size_{size} {
+    bo_ = std::make_unique<xrt::bo>(device, size, 0);
+    phy_ = bo_->address();
+    CHECK(nullptr != (void*)phy_);
+    data_ = bo_->map<void*>();
+    CHECK(nullptr != data_);
 
-    xclBOProperties p;
-    auto error_code = xclGetBOProperties(xcl_handle, bo_, &p);
-    if (error_code != 0) {
-      phy_ = -1;
-      LOG(INFO) << "cannot xclGetBOProperties!";
-    } else {
-      phy_ = p.paddr;
-      LOG(INFO) << "simulate host phy successfully!"
-                << " phy_=0x" << std::hex << phy_ << " data_=0x" << data_
-                << std::dec;
-    }
+    LOG(INFO) << "simulate host phy successfully!"
+              << " phy_=0x" << std::hex << phy_ << " data_=0x" << data_
+              << std::dec;
   }
-  ~Simulate_Host_Phy() {
-    xclUnmapBO(handle_, bo_, (void*)data_);
-    xclFreeBO(handle_, bo_);
-    LOG(INFO) << "destroy simulate host phy";
-  }
+  ~Simulate_Host_Phy() { LOG(INFO) << "destroy simulate host phy"; }
 
  public:
   uint64_t get_host_phy_addr() { return phy_; }
   void* get_host_virt_addr() { return data_; }
-  void sync_data_for_write() {
-    xclSyncBO(handle_, bo_, XCL_BO_SYNC_BO_TO_DEVICE, size_, 0);
-  }
-  void sync_data_for_read() {
-    xclSyncBO(handle_, bo_, XCL_BO_SYNC_BO_FROM_DEVICE, size_, 0);
-  }
+  void sync_data_for_write() { bo_->sync(XCL_BO_SYNC_BO_TO_DEVICE); }
+  void sync_data_for_read() { bo_->sync(XCL_BO_SYNC_BO_FROM_DEVICE); }
   void dump_data(const std::string filename) {
     if (filename.empty()) return;
 
@@ -80,8 +65,7 @@ struct Simulate_Host_Phy {
   }
 
  private:
-  xclDeviceHandle handle_;
-  xclBufferHandle bo_;
+  std::unique_ptr<xrt::bo> bo_;
   size_t size_;
   uint64_t phy_;
   void* data_;
@@ -127,7 +111,7 @@ int main(int argc, char* argv[]) {
   }
 
   // get xrt handle
-  auto handle = xclOpen(0, NULL, XCL_INFO);
+  auto device = xrt::device(0);
 
   // create dpu runner
   auto graph = xir::Graph::deserialize(xmodel_file);
@@ -179,7 +163,7 @@ int main(int argc, char* argv[]) {
   hp_out.reserve(batchsize);
   for (auto i = 0; i < batchsize; i++) {
     hp_out.emplace_back(
-        std::make_unique<Simulate_Host_Phy>(handle, buffersize));
+        std::make_unique<Simulate_Host_Phy>(device, buffersize));
     out_batch_addr[i] = hp_out[i]->get_host_phy_addr();
   }
   auto output_tb = vart::TensorBuffer::create_unowned_device_tensor_buffer(
@@ -190,7 +174,7 @@ int main(int argc, char* argv[]) {
   // simulate a host phy addr for output tensor of softmax runner
   unsigned int cls = out_tensor_shape[1];
   auto sim_hp =
-      std::make_unique<Simulate_Host_Phy>(handle, cls * sizeof(float));
+      std::make_unique<Simulate_Host_Phy>(device, cls * sizeof(float));
   auto softmax_phy_addr = sim_hp->get_host_phy_addr();
   auto softmax_virt_data = sim_hp->get_host_virt_addr();
   int fixpos = get_fix_pos(output_tensors[0]);
@@ -209,21 +193,20 @@ int main(int argc, char* argv[]) {
   CHECK_EQ(status, 0) << "failed to run dpu";
 
   for (auto i = 0; i < batchsize; i++) {
-    //hp_out[i]->sync_data_for_read();
-    //hp_out[i]->dump_data("image_" + std::to_string(i + 1) + "_softmax_in.bin");
+    // hp_out[i]->sync_data_for_read();
+    // hp_out[i]->dump_data("image_" + std::to_string(i + 1) +
+    // "_softmax_in.bin");
 
     // create and execute softmax runner
     run_user_specific_ip(out_batch_addr[i], softmax_phy_addr, cls, 1u, fixpos);
 
     sim_hp->sync_data_for_read();
-    //sim_hp->dump_data("image_" + std::to_string(i + 1) + "_softmax_out.bin");
+    // sim_hp->dump_data("image_" + std::to_string(i + 1) + "_softmax_out.bin");
 
     // get and print topk result
     auto topk_value = topk((float*)softmax_virt_data, cls, 5u);
     print_topk(image_files[i], topk_value);
   }
-
-  xclClose(handle);
 
   return 0;
 }

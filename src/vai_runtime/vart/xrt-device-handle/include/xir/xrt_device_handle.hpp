@@ -45,40 +45,32 @@ class XrtDeviceHandle {
 
  public:
   virtual ~XrtDeviceHandle() = default;
-  // dirty hack, avoid include xrt.h
-  // typedef void * xclDeviceHandle;
-  virtual void* get_handle(const std::string& cu_name, size_t core_idx) = 0;
-  virtual size_t get_cu_index(const std::string& cu_name,
-                              size_t core_idx) const = 0;
-  virtual size_t get_ip_index(const std::string& cu_name,
-                              size_t core_idx) const = 0;
-  virtual unsigned int get_cu_mask(const std::string& cu_name,
-                                   size_t core_idx) const = 0;
-
-  virtual uint64_t get_cu_addr(const std::string& cu_name,
-                               size_t core_idx) const = 0;
-
-  virtual unsigned int get_num_of_cus(const std::string& cu_name) const = 0;
-
-  virtual std::string get_cu_full_name(const std::string& cu_name,
-                                       size_t core_idx) const = 0;
-  virtual std::string get_cu_kernel_name(const std::string& cu_name,
-                                         size_t core_idx) const = 0;
-  virtual std::string get_instance_name(const std::string& cu_name,
-                                        size_t core_idx) const = 0;
+  virtual size_t get_num_of_devices() const = 0;
+  virtual size_t get_num_of_cus() const = 0;
+  virtual size_t get_num_of_cus(const std::string& cu_name) const = 0;
+  virtual size_t get_device_index(const std::string& cu_name,
+                                  size_t cu_index) const = 0;
   virtual size_t get_device_id(const std::string& cu_name,
-                               size_t core_idx) const = 0;
-  virtual size_t get_core_id(const std::string& cu_name,
-                             size_t core_idx) const = 0;
-
-  virtual uint64_t get_fingerprint(const std::string& cu_name,
-                                   size_t core_idx) const = 0;
-  virtual unsigned int get_bank_flags(const std::string& cu_name,
-                                      size_t core_idx) const {
-    return 0u;
-  }
-  virtual std::array<unsigned char, SIZE_OF_UUID> get_uuid(
-      const std::string& cu_name, size_t core_idx) const = 0;
+                               size_t cu_index) const = 0;
+  virtual const void* get_device_uuid(const std::string& cu_name,
+                                      size_t cu_index) const = 0;
+  virtual std::string get_cu_full_name(const std::string& cu_name,
+                                       size_t cu_index) const = 0;
+  virtual std::string get_cu_kernel_name(const std::string& cu_name,
+                                         size_t cu_index) const = 0;
+  virtual std::string get_cu_instance_name(const std::string& cu_name,
+                                           size_t cu_index) const = 0;
+  virtual uint64_t get_cu_fingerprint(const std::string& cu_name,
+                                      size_t cu_index) const = 0;
+  virtual const void* get_device_handle(const std::string& cu_name,
+                                        size_t cu_index) const = 0;
+  virtual const void* get_kernel_handle(const std::string& cu_name,
+                                        size_t cu_index) const = 0;
+  virtual uint32_t get_memory_bank_index() const = 0;
+  virtual uint32_t read_register(const std::string& cu_name, size_t cu_index,
+                                 uint32_t offset) const = 0;
+  virtual void write_register(const std::string& cu_name, size_t cu_index,
+                              uint32_t offset, uint32_t value) const = 0;
 
  private:
   XrtDeviceHandle(const XrtDeviceHandle& rhs) = delete;

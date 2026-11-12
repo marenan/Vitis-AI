@@ -17,15 +17,12 @@
 #include <functional>
 #include <memory>
 #include <vitis/ai/with_injection.hpp>
+
 #include "./buffer_object_export.hpp"
 namespace xir {
 struct XclBo {
-  void* xcl_handle;
-#ifdef _WIN32
-  void* bo_handle;
-#else
-  unsigned int bo_handle;
-#endif
+  const void* xcl_handle;
+  const void* bo_handle;
 };
 
 /**

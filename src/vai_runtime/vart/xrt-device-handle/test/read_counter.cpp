@@ -14,29 +14,16 @@
  * limitations under the License.
  */
 #include <glog/logging.h>
-#include <xrt.h>
-
 #include <iomanip>
 #include <iostream>
-using namespace std;
-extern "C" XCL_DRIVER_DLLESPEC int xclRegRead(xclDeviceHandle handle,
-                                              uint32_t ipIndex, uint32_t offset,
-                                              uint32_t* datap);
-#include "../src/xrt_xcl_read.hpp"
+
 #include "vitis/ai/parse_value.hpp"
 #include "xir/xrt_device_handle.hpp"
-uint32_t get_reg(xclDeviceHandle xcl_handle, uint32_t ip_index,
-                 uint64_t cu_base_addr, uint32_t offset) {
-  uint32_t value = 0;
-  auto read_result =
-      xrtXclRead(xcl_handle, ip_index, offset, cu_base_addr, &value);
+using namespace std;
 
-  CHECK_EQ(read_result, 0) << "xrtXclRead has error!";
-  return value;
-}
 static std::string reg_conf = "/usr/share/vart/reg.conf";
-void xdpu_get_counter(xclDeviceHandle xcl_handle, uint32_t ip_index,
-                      uint64_t cu_base_addr) {
+void xdpu_get_counter(const xir::XrtDeviceHandle* handle, const std::string& cu_name,
+                      size_t cu_index) {
   struct reg {
     uint32_t addr;
     std::string name;
@@ -53,9 +40,9 @@ void xdpu_get_counter(xclDeviceHandle xcl_handle, uint32_t ip_index,
   }
 
   for (const auto& reg : regs) {
-    auto value = get_reg(xcl_handle, ip_index, cu_base_addr, reg.addr);
+    auto value = handle->read_register(cu_name, cu_index, reg.addr);
     LOG_IF(INFO, true) << "0x" << std::hex << (reg.addr) << "\t"  //
-                       << std::setfill(' ') << std::hex << "0x" << std::setw(16)
+                       << std::setfill(' ') << "0x" << std::setw(16)
                        << std::left << value << " "  //
                        << std::dec << std::setw(16) << std::right << value
                        << "\t"  //
@@ -73,10 +60,6 @@ int main(int argc, char* argv[]) {
   reg_conf = argv[1];
   auto cu_name = std::string(argv[2]);
   auto index = std::stoi(std::string(argv[3]));
-  LOG(INFO) << "h->get_handle() " << h->get_handle(cu_name, index) << " "  //
-      ;
-  xdpu_get_counter(h->get_handle(cu_name, index),
-                   h->get_cu_index(cu_name, index),
-                   h->get_cu_addr(cu_name, index));
+  xdpu_get_counter(h.get(), cu_name, index);
   return 0;
 }

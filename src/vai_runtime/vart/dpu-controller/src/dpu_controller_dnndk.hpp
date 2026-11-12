@@ -30,7 +30,6 @@ class DpuControllerDnndk : public xir::DpuController {
                    const std::vector<uint64_t>& gen_reg) override;
   virtual size_t get_num_of_dpus() const override;
   virtual size_t get_device_id(size_t device_core_id) const override;
-  virtual size_t get_core_id(size_t device_core_id) const override;
   virtual uint64_t get_fingerprint(size_t device_core_id) const override;
 
  private:

@@ -26,7 +26,7 @@
 #include <cstddef>
 #include <vitis/ai/env_config.hpp>
 #ifndef _WIN32
-#include <vitis/ai/trace.hpp>
+#  include <vitis/ai/trace.hpp>
 #endif
 #include <vitis/ai/weak.hpp>
 #include <vitis/ai/xxd.hpp>
@@ -93,7 +93,7 @@ DpuControllerDnndk::DpuControllerDnndk()
   auto cu_name = "DPU";
   auto cu_fingerprint = fingerprint_;
 #ifndef _WIN32
-  for (size_t i = 0; i < get_num_of_dpus(); i++) { 
+  for (size_t i = 0; i < get_num_of_dpus(); i++) {
     std::ostringstream name;
     name << "DPU_" << cu_core_id << std::endl;
     auto cu_full_name = name.str();
@@ -101,7 +101,7 @@ DpuControllerDnndk::DpuControllerDnndk()
                                TRACE_VAR(cu_core_id), TRACE_VAR(cu_addr),
                                TRACE_VAR(cu_name), TRACE_VAR(cu_full_name),
                                TRACE_VAR(cu_fingerprint));
-    cu_core_id ++;
+    cu_core_id++;
   }
 #endif
 }
@@ -158,11 +158,12 @@ static std::string xdpu_get_counter(const ioc_kernel_run_t& t) {
 }
 
 uint64_t get_device_hwcounter(const ioc_kernel_run_t& t) {
-	char* base = ( char*)&t;
-	uint32_t value_l = *(uint32_t*)(base + offsetof(ioc_kernel_run_t, counter));
-	uint32_t value_h = *(uint32_t*)(base + offsetof(ioc_kernel_run_t, counter) + sizeof(uint32_t));
-	uint64_t value = ((uint64_t)value_h << 32) | value_l;
-	return value;
+  char* base = (char*)&t;
+  uint32_t value_l = *(uint32_t*)(base + offsetof(ioc_kernel_run_t, counter));
+  uint32_t value_h = *(uint32_t*)(base + offsetof(ioc_kernel_run_t, counter) +
+                                  sizeof(uint32_t));
+  uint64_t value = ((uint64_t)value_h << 32) | value_l;
+  return value;
 }
 
 void DpuControllerDnndk::run(size_t core_idx, const uint64_t code,
@@ -253,11 +254,6 @@ size_t DpuControllerDnndk::get_num_of_dpus() const {
 size_t DpuControllerDnndk::get_device_id(size_t device_core_id) const {
   // only single device is supported.
   return 0u;
-}
-size_t DpuControllerDnndk::get_core_id(size_t device_core_id) const {
-  // only single device is supported.
-  CHECK_LT(device_core_id, get_num_of_dpus());
-  return device_core_id;
 }
 
 uint64_t DpuControllerDnndk::get_fingerprint(size_t device_core_id) const {

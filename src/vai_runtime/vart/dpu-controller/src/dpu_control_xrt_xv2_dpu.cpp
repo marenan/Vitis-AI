@@ -34,7 +34,7 @@ DEF_ENV_PARAM(XLNX_SHOW_DPU_COUNTER, "0");
 
 DEF_ENV_PARAM(DEBUG_AP_START_CU_XV2DPU, "0");
 DEF_ENV_PARAM_2(XLNX_DIRTY_HACK_XV2DPU_GEN_BASE, "0x200", uint32_t);
-#define DOMAIN xclBOKind(1)
+
 static std::string dump_bo_reg(
     const std::vector<std::unique_ptr<xir::BufferObject>>& bo_reg) {
   std::ostringstream str;
@@ -59,31 +59,27 @@ static std::vector<std::unique_ptr<xir::BufferObject>> create_batch_bo(
 DpuControllerXrtXv2Dpu::DpuControllerXrtXv2Dpu(
     std::unique_ptr<xir::XrtCu>&& xrt_cu)
     : xir::DpuController{}, xrt_cu_{std::move(xrt_cu)} {
-  auto cu_num = get_num_of_dpus();
-
-  for (size_t i = 0; i < cu_num; i++) {
+  for (size_t i = 0; i < get_num_of_dpus(); i++) {
     auto cu_device_id = xrt_cu_->get_device_id(i);
-    auto cu_core_id = xrt_cu_->get_core_id(i);
     auto cu_name = xrt_cu_->get_instance_name(i);
     auto cu_full_name = xrt_cu_->get_full_name(i);
     auto cu_fingerprint = xrt_cu_->get_fingerprint(i);
     auto cu_batch = get_batch_size(i);
-    auto reg_size = get_size_of_gen_regs(cu_core_id);
+    auto reg_size = get_size_of_gen_regs(i);
 
     bo_.emplace_back(create_batch_bo(cu_batch, reg_size * sizeof(uint64_t),
                                      cu_device_id, cu_full_name));
     LOG_IF(INFO, ENV_PARAM(DEBUG_DPU_CONTROLLER))
-        << "cu_device_id: " << cu_device_id << ", "
-        << "core_idx: " << i << ", "
-        << "cu_full_name: " << cu_full_name << ", "
-        << "cu_batch: " << cu_batch << ", "
-        << ((ENV_PARAM(DEBUG_DPU_CONTROLLER) > 1) ? dump_bo_reg(bo_[i])
-                                                  : std::string(""));
+        << "cu_device_id: " << cu_device_id << ", "  //
+        << "core_idx: " << i << ", "                 //
+        << "cu_full_name: " << cu_full_name << ", "  //
+        << "cu_batch: " << cu_batch << ", "          //
+        << dump_bo_reg(bo_[i])                       //
+        ;
 #ifndef _WIN32
-    vitis::ai::trace::add_info("dpu-controller", TRACE_VAR(cu_device_id),
-                               TRACE_VAR(cu_core_id), TRACE_VAR(cu_batch),
-                               TRACE_VAR(cu_name), TRACE_VAR(cu_full_name),
-                               TRACE_VAR(cu_fingerprint));
+    vitis::ai::trace::add_info(
+        "dpu-controller", TRACE_VAR(cu_device_id), TRACE_VAR(cu_batch),
+        TRACE_VAR(cu_name), TRACE_VAR(cu_full_name), TRACE_VAR(cu_fingerprint));
 #endif
   }
 }
@@ -109,6 +105,7 @@ std::string DpuControllerXrtXv2Dpu::xdpu_get_counter(size_t device_core_id) {
   }
   return str.str();
 }
+
 static std::string dump_gen_reg(const std::vector<uint64_t>& gen_reg) {
   std::ostringstream str;
   str << std::hex;
@@ -117,6 +114,7 @@ static std::string dump_gen_reg(const std::vector<uint64_t>& gen_reg) {
   }
   return str.str();
 }
+
 static bool check_reg_addr(uint64_t addr) {
   if (addr == 0xFFFFFFFFFFFFFFFF) return true;
   if ((addr & 0xFFFFF00000000000) == 0) return true;
@@ -255,14 +253,14 @@ void DpuControllerXrtXv2Dpu::run(size_t core_idx, const uint64_t code,
   xrt_cu_->run(
       core_idx, func,
       // on_success
-      [core_idx, this](xclDeviceHandle handle, uint64_t cu_addr) -> void {
+      [core_idx, this]() -> void {
         if (ENV_PARAM(XLNX_SHOW_DPU_COUNTER)) {
           std::cout << "core_idx = " << core_idx << " "
                     << xdpu_get_counter(core_idx) << std::endl;
         }
       },
       // on failure
-      [core_idx, this](xclDeviceHandle handle, uint64_t cu_addr) -> void {
+      [core_idx, this]() -> void {
         LOG(FATAL) << "dpu timeout! "
                    << "core_idx = " << core_idx << "\n"
                    << xdpu_get_counter(core_idx);
@@ -274,15 +272,15 @@ void DpuControllerXrtXv2Dpu::run(size_t core_idx, const uint64_t code,
                               core_idx, hwconuter);
 #endif
 }
+
 size_t DpuControllerXrtXv2Dpu::get_num_of_dpus() const {
   return xrt_cu_->get_num_of_cu();
 }
+
 size_t DpuControllerXrtXv2Dpu::get_device_id(size_t device_core_id) const {
   return xrt_cu_->get_device_id(device_core_id);
 }
-size_t DpuControllerXrtXv2Dpu::get_core_id(size_t device_core_id) const {
-  return xrt_cu_->get_core_id(device_core_id);
-}
+
 uint64_t DpuControllerXrtXv2Dpu::get_fingerprint(size_t device_core_id) const {
   return xrt_cu_->get_fingerprint(device_core_id);
 }
@@ -300,7 +298,6 @@ uint64_t DpuControllerXrtXv2Dpu::get_device_hwconuter(
 }
 
 size_t DpuControllerXrtXv2Dpu::get_batch_size(size_t device_core_id) const {
-  // see
   auto value = xrt_cu_->read_register(device_core_id, 0x134);
   auto ret = 1;
   if (value >= 1u && value <= 16u) {
@@ -313,13 +310,16 @@ size_t DpuControllerXrtXv2Dpu::get_size_of_gen_regs(
     size_t device_core_id) const {
   return 256u;
 }
+
 std::string DpuControllerXrtXv2Dpu::get_full_name(size_t device_core_id) const {
   return xrt_cu_->get_full_name(device_core_id);
 }
+
 std::string DpuControllerXrtXv2Dpu::get_kernel_name(
     size_t device_core_id) const {
   return xrt_cu_->get_kernel_name(device_core_id);
 }
+
 std::string DpuControllerXrtXv2Dpu::get_instance_name(
     size_t device_core_id) const {
   return xrt_cu_->get_instance_name(device_core_id);

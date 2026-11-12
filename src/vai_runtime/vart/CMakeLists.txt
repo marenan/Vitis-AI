@@ -16,7 +16,7 @@
 cmake_minimum_required(VERSION 3.12)
 project(
   vart
-  VERSION 3.5.0
+  VERSION 5.0.0
   LANGUAGES C CXX)
 
 link_directories("$ENV{CONDA_PREFIX}/lib")
@@ -27,7 +27,7 @@ option(ENABLE_SIM_RUNNER "enable sim runner or not" OFF)
 option(ENABLE_DPU_RUNNER "enable dpu runner or not" ON)
 option(ENABLE_XRNN_RUNNER "enable xrnn runner or not" OFF)
 option(ENABLE_RNN_RUNNER "enable rnn runner or not" OFF)
-option(BUILD_PYTHON "build python library" ON)
+option(BUILD_PYTHON "build python library" OFF)
 option(BUILD_TEST "build test" OFF)
 
 set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH};${PROJECT_SOURCE_DIR}/cmake")
@@ -45,9 +45,10 @@ if(${CMAKE_SOURCE_DIR} STREQUAL ${PROJECT_SOURCE_DIR})
   find_package(target-factory REQUIRED)
 endif()
 find_package(Threads REQUIRED)
-find_package(XRT HINTS /opt/xilinx/xrt/share/cmake/XRT)
+#find_package(XRT HINTS /opt/xilinx/xrt/share/cmake/XRT)
+find_package(absl REQUIRED)
 if(XRT_FOUND)
-  if(TARGET XRT::xrt_core)
+  if(TARGET XRT::xrt_coreutil)
     # it brreaks all other runners if XRT obsolete this target.
 
     # bugfix for XRT.cmake

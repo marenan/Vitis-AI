@@ -47,7 +47,7 @@ if(XRT_FOUND)
        ${CMAKE_CURRENT_SOURCE_DIR}/src/buffer_object_xrt_imp.hpp
        ${CMAKE_CURRENT_SOURCE_DIR}/src/buffer_object_xrt_imp.cpp)
   list(APPEND MY_PROJECT_DEPS xrt-device-handle)
-  list(APPEND MY_PROJECT_DEPS XRT::xrt_core XRT::xrt_coreutil)
+  list(APPEND MY_PROJECT_DEPS XRT::xrt_coreutil)
 endif(XRT_FOUND)
 
 # optional implementation on QNX platform
@@ -91,6 +91,7 @@ target_link_libraries(
   ${COMPONENT_NAME}
   PRIVATE ${MY_PROJECT_DEPS}
   PUBLIC util)
+
 target_include_directories(
   ${COMPONENT_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
